@@ -1,7 +1,18 @@
-# pipeline (being ported)
+# pipeline — pretraining (dev) and fine-tuning (users)
 
-Training code for the three stages + fine-tuning, ported from the development repo (mlpf/analysis):
-`trk_data_truth.py` (CLD adapter), `trk_model.py` (TrackFormer: encoder full|lsh + slot decoder),
-`trk_train.py` (HEPTv2 losses, DM eval vs baseline), `trk_eval.py` (eff/fake vs pT + cut tables).
-Design docs live in the development repo: pf_foundation_plan.md, ml_tracking_plan.md,
-trackml_data_contract.md.
+Two audiences, two entry points:
+
+| you are… | go to | you get |
+|---|---|---|
+| **using the models** — you have a (new) detector and want reconstruction on it | [`finetune/`](finetune/README.md) | one interface: pretrained [T]+[C]+[PF] backbone + your canonical parquet → adapted models. You never touch stage internals. |
+| **developing the models** — pretraining stages, scaling, architecture work | [`pretrain/`](pretrain/) | per-stage code: [`tracking/`](pretrain/tracking/README.md) ([T], active), [`clustering/`](pretrain/clustering/README.md) ([C], design fixed), [`mlpf/`](pretrain/mlpf/README.md) ([PF], design fixed) |
+
+Both consume the same input: **canonical parquet** from `postprocessing/` (schema-audited,
+detector-blind). The split mirrors the training strategy: stages are pretrained separately
+on a mixed-detector corpus (with per-stage dense supervision), then combined; adapting to a
+new detector is a ladder — zero-shot → heads-only → full fine-tune — and *performance vs
+adaptation budget* is the headline measurement.
+
+Status (2026-10-01): `pretrain/tracking` migrated and stability-checked on mixed CLD+IDEA
+input; `clustering`/`mlpf` are design stubs pending implementation; `finetune` is an
+interface stub until pretrained checkpoints exist for all stages.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CLD production job: Pythia -> ddsim -> CLDReconstruction -> EOS, satisfying docs/data_spec.md.
+# CLD production job: Pythia -> ddsim -> CLDReconstruction -> EOS, satisfying validation/README.md.
 # Adapted (parameterized) from B. Dudar's gen_sim_rec.sh (reference copy kept alongside).
 #
 # Usage:   ./gen_sim_rec.sh <job_id> <n_events>

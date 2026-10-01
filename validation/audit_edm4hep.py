@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Audit an EDM4hep production file against docs/data_spec.md (the authoritative collection
+Audit an EDM4hep production file against validation/README.md (the authoritative collection
 spec for the portable-MLPF pipeline: [T] tracking, [C] clustering, [PF] particle flow).
 
 Exits 0 only if ALL required collections are present, every relation target resolves to a
@@ -175,7 +175,7 @@ def main():
         for x in allfails:
             print("  -", x)
         sys.exit(1)
-    print("VERDICT: PASS — file(s) satisfy docs/data_spec.md")
+    print("VERDICT: PASS — file(s) satisfy validation/README.md")
 
 
 if __name__ == "__main__":

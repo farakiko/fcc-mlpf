@@ -1,4 +1,22 @@
-# Data specification — EDM4hep collections required by the portable-MLPF pipeline
+# validation — the executable data specification
+
+**What this does:** defines which EDM4hep collections a production must contain
+(the specification below) and enforces it with one command:
+
+```bash
+python audit_edm4hep.py --detector <cld|idea> FILE.edm4hep.root [...]
+# "VERDICT: PASS" + exit 0  →  the file serves all pipeline stages it claims to
+```
+
+Run it on **every** delivery — your own condor output, a colleague's dataset, a new
+detector's first file. It checks presence, that every relation resolves to a stored
+collection, that the digi→sim→MCParticle truth chain works end-to-end, and the calo
+fractional-truth links. To support a new detector, add a collection map at the top of
+`audit_edm4hep.py` (role-based: same groups, that detector's names).
+
+---
+
+# Data specification — EDM4hep collections required by the pipeline
 
 > **This is the authoritative list.** Every production (any detector) must satisfy it; every
 > delivery is checked with `validation/audit_edm4hep.py` (which implements exactly this spec
@@ -47,7 +65,7 @@ member names, not historical spellings** — we once mis-declared `trackStates` 
   `collectionID` against it; **every referenced ID must be a stored collection**, no dangling).
 - Production provenance recorded alongside the files: key4hep release, CLDConfig version/source,
   geometry compact file + its origin, generator card, seed scheme. (Our production scripts
-  write this; see `docs/production_cld.md`.)
+  write this; see `production/cld/README.md`.)
 
 ## 5. Porting to another detector (ALLEGRO / ILD / IDEA / CLD variants)
 

@@ -74,4 +74,4 @@ former today.
   test = `--part.userParticleHandler=''` + `--part.keepAllParticles true`.
   ⇒ MCParticle content differs between the two splits; keep splits separate and document
   which convention any new production uses (cf. the CLD handler-on/off warning,
-  `docs/data_spec.md` §6.2).
+  `validation/README.md` §6.2).

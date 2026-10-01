@@ -1,53 +1,56 @@
 # fcc-mlpf
 
-**Detector-portable machine-learned particle flow for future colliders** — one pipeline from
-raw detector output to PF particles, built so that a *new* detector design (CLD variant,
-different B-field, ALLEGRO, IDEA, ...) means a quick retraining/fine-tune, not re-engineering.
-
-The pipeline is staged, with each stage an instance of the same point-cloud encoder +
-slot-decoder pattern (HEPTv2, arXiv:2606.20437), exchanging latent objects:
+**Machine-learned, detector-portable particle-flow reconstruction for future colliders.**
+One pipeline from raw detector simulation to reconstructed particles — track finding **[T]**,
+calorimeter clustering **[C]**, and particle flow **[PF]** — built so that a *new* detector
+design (a CLD variant, a different B-field, IDEA, ALLEGRO, …) means a quick retraining or
+fine-tune, not re-engineering. Currently supported: **CLD** (all stages) and **IDEA** ([T]).
 
 ```
- tracker hits ──► [T] track finding  ──► track slots  ─┐
- calo hits    ──► [C] calo clustering ──► shower slots ─┼─► [PF] particle head ──► particles
- muon hits    ──────────────────────────────────────────┘      (assoc + PID + energy)
+ production/<det>          validation/              postprocessing/            pipeline/
+ generator → Geant4 →  →  audit_edm4hep.py  →  →  <det>.py adapter   →  →  training [T]/[C]/[PF]
+ reco → EDM4hep ROOT      (is everything there?)   → canonical parquet       (detector-blind)
+                                                   + schema.py audit
 ```
 
-Pretraining runs per stage on a mixed-detector corpus; adaptation to a new detector is a
-ladder (zero-shot → heads-only → full fine-tune), and *performance vs adaptation budget* is
-the headline measurement.
+The models are staged instances of one point-cloud encoder + slot-decoder pattern
+(HEPTv2, arXiv:2606.20437): [T] tracker hits → track slots, [C] calo hits → shower slots,
+[PF] slots → particles. Pretraining runs per stage on a mixed-detector corpus; adapting to a
+new detector is a ladder (zero-shot → heads-only → full fine-tune), and *performance vs
+adaptation budget* is the headline measurement.
 
-## Repo layout
+## I want to…
 
-| path | what |
+| goal | go to |
 |---|---|
-| `docs/data_spec.md` | **the authoritative list of EDM4hep collections** each stage needs, with the why, naming pitfalls, and porting rules |
-| `docs/production_cld.md` | how to produce compliant CLD samples with condor on lxplus (pinned versions, costs, smoke test) |
-| `production/cld/` | the complete, vendored production: job script, submit file, Pythia card, CLDConfig, CLD_o2_v08 geometry |
-| `production/idea/` | IDEA chain (vendored from A. De Vita's `MLBased-FCC-TrackFinder-training`): condor production + the SenseWire→L/R feature extraction; collection map + existing 500k-event Z-pole dataset documented in its README |
-| `validation/audit_edm4hep.py` | executable version of the data spec — run on every delivery (`--detector cld|idea`); exit 0 = compliant |
-| `pipeline/` | the three training stages + fine-tuning (being ported from the development repo) |
+| **produce simulation samples** (condor on lxplus) for CLD or IDEA | [`production/README.md`](production/README.md) → per-detector guides with exact commands |
+| **check a dataset has everything the pipeline needs** (yours or a colleague's) | [`validation/README.md`](validation/README.md) — one command, PASS/FAIL with diagnoses |
+| **convert EDM4hep to the training format** | [`postprocessing/README.md`](postprocessing/README.md) — adapters + the canonical schema and per-detector naming tables |
+| **train / evaluate the models** | [`pipeline/README.md`](pipeline/README.md) |
+| **add a new detector or a variant** | the "new detector" sections of the production, validation and postprocessing READMEs — in that order |
+
+Every stage has an **audit with an exit code**; if the audits pass, the next stage works.
+That contract is the whole design: all detector specificity lives in small per-detector
+production configs and adapters, and the training code never sees a detector name.
 
 ## Status (2026-10-01)
 
-- **Production**: CLD recipe validated end-to-end; reference sample 4,950 ttbar events
-  (B. Dudar) passes the audit with 100% tracker-hit truth linking and fractional calo truth.
-- **[T] tracking**: first truth-trained benchmark on that sample — slot-based finder vs CLD
-  conformal tracking (identical double-majority criterion): 60.6% eff / 8.3% fakes vs
+- **CLD**: full production chain (pinned key4hep `2026-04-08`, vendored CLDConfig +
+  CLD_o2_v08) validated end-to-end incl. a user condor batch; reference sample 4,950 tt̄
+  events with 100% tracker-hit truth linking and fractional calo truth.
+- **IDEA**: A. De Vita's tracking production vendored (with feature enrichments); his
+  existing 500k-event Z→qq̄ digi dataset audited PASS. Calo: simulation machinery present
+  behind one flag, DR digitization pending — [T] only for now.
+- **Postprocessing**: canonical schema v0.2 + CLD and IDEA adapters, both audit-clean.
+- **[T] result** (development repo, being migrated here): slot-decoder track finder vs CLD
+  conformal tracking, identical double-majority criterion — 60.6% eff / **8.3% fakes** vs
   63.7% / 19.5% inclusive (pT>0.1 GeV); **better than the baseline below ~0.6 GeV on both
-  efficiency and fakes, and half the fakes everywhere**, with a 1.4M-parameter model trained
-  4 GPU-hours. Mid-pT efficiency gap closing with data/epochs (training was data-limited).
-- **[C] / [PF]**: design fixed (energy-weighted + fractional-capable slot decoder; calo-entrance
-  targets per the validated CLD target definition); implementation next.
-- **IDEA**: production chain + feature extraction vendored from A. De Vita (GGTF/Genfit2);
-  his existing **500k-event Z→qq̄ @ 91 GeV digi dataset audited PASS** (100% drift-chamber
-  truth linking, ~3.6k tracker hits/event) — [T] bring-up on IDEA needs no new simulation.
+  metrics**, half the fakes everywhere, at 1.4M parameters and 4 GPU-hours of training.
+- **[C]/[PF]**: design fixed, implementation follows the [T] migration.
 
-## Quick start (production)
+## Acknowledgments
 
-```bash
-cd production/cld && ./stage_to_eos.sh /eos/user/<u>/<you>/fcc-mlpf/production/cld
-# edit run.sub (STAGING_DIR/OUTPUT_DIR env line; n_events; queue N); mkdir -p logs/out logs/err
-condor_submit run.sub
-python ../../validation/audit_edm4hep.py <OUTPUT_DIR>/*.edm4hep.root   # must print PASS
-```
+IDEA production & drift-chamber feature extraction adapted from **Andrea De Vita**'s
+`MLBased-FCC-TrackFinder-training` (GGTF); CLD production setup adapted from **Bohdan
+Dudar**; CLDConfig and CLD_o2_v08 geometry vendored from **key4hep / k4geo**. Model design
+follows **HEPTv2** (arXiv:2606.20437) and the object-condensation / MLPF lineage.

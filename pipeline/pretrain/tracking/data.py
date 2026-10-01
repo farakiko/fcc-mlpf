@@ -1,0 +1,96 @@
+"""
+[T] data layer: canonical parquet (postprocessing/README.md) -> training events.
+Detector-blind: everything needed is in the schema columns + file metadata.
+
+Each event -> dict(x[N,F], etaphi[N,3], y[N], K, track_pt[K], detector, base_y[N]?).
+Labels: truth selection = charged, pT > pt_cut, >= min_hits hits (applied per event);
+non-selected particles' hits -> -1 (background class for the aux losses).
+
+Features (F = 34, modality-aware; zeros where a field doesn't apply):
+  pos/1000 (3), r/1000, sin/cos phi, eta/3, log-eDep,
+  du,dv,dw *100, drift_err*100, alongwire_err/100,
+  stereo, sin/cos wire-azim, drift/10, L and R candidate pos /1000 (6),
+  nclusters/30, modality, role one-hot (9)
+"""
+import os
+
+import numpy as np
+import pyarrow.parquet as pq
+import torch
+
+NROLE = 9
+NFEAT = 25 + NROLE
+
+
+def featurize(c):
+    """c: dict of per-hit np arrays (canonical columns) -> [N, NFEAT] float32."""
+    x, y, z = c["thit_x"], c["thit_y"], c["thit_z"]
+    r = np.hypot(x, y)
+    phi = np.arctan2(y, x)
+    eta = np.arcsinh(np.divide(z, r, out=np.zeros_like(z), where=r > 0))
+    edep = np.log10(np.clip(c["thit_edep"], 1e-9, None) * 1e6) / 5.0
+    wire = c["thit_modality"].astype(np.float64)        # 1 = wire hit; gates wire features
+    role = c["thit_role"].astype(int)
+    onehot = np.zeros((len(x), NROLE), dtype=np.float32)
+    onehot[np.arange(len(x)), np.clip(role, 0, NROLE - 1)] = 1.0
+    F = np.stack([
+        x / 1000, y / 1000, z / 1000, r / 1000,
+        np.sin(phi), np.cos(phi), eta / 3.0, edep,
+        c["thit_du"] * 100, c["thit_dv"] * 100, c["thit_dw"] * 100,
+        c["thit_drift_err"] * 100, c["thit_alongwire_err"] / 100,
+        c["thit_wire_stereo"] * wire,
+        np.sin(c["thit_wire_azim"]) * wire, np.cos(c["thit_wire_azim"]) * wire,
+        c["thit_drift"] / 10,
+        c["thit_left_x"] / 1000, c["thit_left_y"] / 1000, c["thit_left_z"] / 1000,
+        c["thit_right_x"] / 1000, c["thit_right_y"] / 1000, c["thit_right_z"] / 1000,
+        c["thit_nclusters"] / 30,
+        c["thit_modality"].astype(np.float64),
+    ], 1).astype(np.float32)
+    return np.concatenate([F, onehot], 1), np.stack(
+        [eta, np.sin(phi), np.cos(phi)], 1).astype(np.float32)
+
+
+def load_parquet(path, pt_cut=0.1, min_hits=3):
+    """-> list of event dicts (see module docstring)."""
+    t = pq.read_table(path)
+    md = {k.decode(): v.decode() for k, v in (t.schema.metadata or {}).items()}
+    det = md.get("detector", "unknown")
+    has_base = "bhit_track" in t.column_names
+    cols = [c for c in t.column_names]
+    events = []
+    for i in range(t.num_rows):
+        c = {name: np.asarray(t.column(name)[i].as_py()) for name in cols}
+        if len(c["thit_x"]) == 0:
+            continue
+        x, etaphi = featurize(c)
+        # truth selection on the mc block
+        y_mc = c["thit_mc"]
+        u, cnt = np.unique(y_mc[y_mc >= 0], return_counts=True)
+        pt = np.hypot(c["mc_px"][u], c["mc_py"][u])
+        keep = u[(cnt >= min_hits) & (np.abs(c["mc_charge"][u]) > 0) & (pt > pt_cut)]
+        remap = {int(k): j for j, k in enumerate(keep)}
+        yl = np.array([remap.get(int(t_), -1) for t_ in y_mc], dtype=np.int64)
+        allpt = np.hypot(c["mc_px"], c["mc_py"])
+        ev = dict(x=x, etaphi=etaphi, y=yl, K=len(keep),
+                  track_pt=np.array([allpt[int(k)] for k in keep], np.float32),
+                  detector=det)
+        if has_base:
+            ev["base_y"] = c["bhit_track"].astype(np.int64)
+        events.append(ev)
+    return events
+
+
+def build_cache(parquets, cache, pt_cut=0.1, min_hits=3):
+    """Load several canonical parquets (possibly different detectors) into one cache."""
+    if cache and os.path.exists(cache):
+        print(f"cache: {cache}", flush=True)
+        return torch.load(cache, weights_only=False)
+    evs = []
+    for p in parquets:
+        n0 = len(evs)
+        evs += load_parquet(p, pt_cut=pt_cut, min_hits=min_hits)
+        print(f"  {os.path.basename(p)}: +{len(evs)-n0} events ({evs[-1]['detector'] if evs else '?'})", flush=True)
+    if cache:
+        torch.save(evs, cache)
+        print(f"wrote {cache} ({len(evs)} events)", flush=True)
+    return evs

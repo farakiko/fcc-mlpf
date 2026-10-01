@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 
 import awkward as ak
+import edm4hep  # LOCAL MODIFICATION (fcc-mlpf): concrete-type casts for TrackerHit interface
 import numpy as np
 import pyarrow.parquet as pq
 from podio import root_io
@@ -38,12 +39,29 @@ HIT_FIELDS = (
     "rightPosition_x", "rightPosition_y", "rightPosition_z",
     "produced_by_secondary", "overlay", "cluster_count",
     "superLayer", "layer", "phi", "stereo",
+    # LOCAL MODIFICATION (fcc-mlpf): raw-measurement columns so the parquet carries BOTH
+    # Andrea's engineered representation (L/R, cluster_count) AND the underlying raw
+    # quantities + uncertainties (CLD-parity feature set; needed for ambiguity-aware
+    # models and the weighted track fit).  Zero where not applicable to a hit type.
+    "drift_dist_err",        # DCH: distanceToWireError            (planar: 0)
+    "pos_along_wire_err",    # DCH: positionAlongWireError         (planar: 0)
+    "wire_stereo",           # DCH: wireStereoAngle [rad]          (planar: 0)
+    "wire_azimuthal",        # DCH: wireAzimuthalAngle [rad]       (planar: 0)
+    "hit_EDep_err",          # eDepError (both types)
+    "hit_du",                # planar (TrackerHit3D): sqrt(cov_xx)  (DCH: 0)
+    "hit_dv",                # planar: sqrt(cov_yy)                 (DCH: 0)
+    "hit_dw",                # planar: sqrt(cov_zz)                 (DCH: 0)
+    "hit_role",              # CANONICAL role id (postprocessing_schema.md): 0 vtx-barrel,
+                             #   1 vtx-endcap/disk, 6 drift chamber, 7 siwrapper-barrel,
+                             #   8 siwrapper-disk  (2-5 reserved: CLD inner/outer tracker)
 )
 
 PARTICLE_FIELDS = (
     "part_p", "part_p_t", "part_theta", "part_phi", "part_m",
     "part_pid", "part_id", "gen_status", "part_parent",
     "part_vertex_x", "part_vertex_y", "part_vertex_z",
+    # LOCAL MODIFICATION (fcc-mlpf): required by the canonical training schema
+    "part_charge", "part_sim_status",
 )
 
 VECTOR_FIELDS = HIT_FIELDS + PARTICLE_FIELDS
@@ -73,6 +91,8 @@ def parse_args():
         "--compression", choices=("zstd", "snappy", "none"), default="zstd",
     )
     parser.add_argument("--compression-level", type=int, default=1)
+    # LOCAL MODIFICATION (fcc-mlpf): bound the event loop (testing / partial processing)
+    parser.add_argument("--max-events", type=int, default=0, help="0 = all events")
     return parser.parse_args()
 
 
@@ -202,9 +222,40 @@ def extract_drift_hits(event, metadata, values, hit_mc_indices):
         values["layer"].append(decoder.get(cell_id, "layer"))
         values["phi"].append(decoder.get(cell_id, "nphi"))
         values["stereo"].append(decoder.get(cell_id, "stereosign"))
+        # LOCAL MODIFICATION (fcc-mlpf): raw drift-measurement quantities + uncertainties
+        values["drift_dist_err"].append(float(digi_hit.getDistanceToWireError()))
+        values["pos_along_wire_err"].append(float(digi_hit.getPositionAlongWireError()))
+        values["wire_stereo"].append(wire_stereo)
+        values["wire_azimuthal"].append(azimuthal)
+        values["hit_EDep_err"].append(float(digi_hit.getEDepError()))
+        values["hit_du"].append(0.0)
+        values["hit_dv"].append(0.0)
+        values["hit_dw"].append(0.0)
+        values["hit_role"].append(6)
+
+
+def _planar_uncertainties(digi_hit):
+    """LOCAL MODIFICATION (fcc-mlpf): measurement uncertainties of a planar digi hit.
+    The link returns the abstract TrackerHit interface; cast to the concrete type:
+    TrackerHitPlane -> (du, dv, 0); TrackerHit3D -> sqrt of cov diagonal (xx,yy,zz)."""
+    if digi_hit.isA[edm4hep.TrackerHitPlane]():
+        hp = getattr(digi_hit, "as")[edm4hep.TrackerHitPlane]()
+        return [float(hp.getDu()), float(hp.getDv()), 0.0]
+    if digi_hit.isA[edm4hep.TrackerHit3D]():
+        h3 = getattr(digi_hit, "as")[edm4hep.TrackerHit3D]()
+        cm = h3.getCovMatrix()
+        try:
+            vals = [float(cm.values[i]) for i in (0, 2, 5)]
+        except Exception:
+            vals = [float(cm[i]) for i in (0, 2, 5)]
+        return [math.sqrt(v) if v > 0 else 0.0 for v in vals]
+    return [0.0, 0.0, 0.0]
 
 
 def extract_planar_hits(event, values, hit_mc_indices):
+    # LOCAL MODIFICATION (fcc-mlpf): role ids per data-contract convention
+    PLANAR_ROLE = {"VTXBSimDigiLinks": 0, "VTXDSimDigiLinks": 1,
+                   "SiWrBSimDigiLinks": 7, "SiWrDSimDigiLinks": 8}
     for collection_name in PLANAR_ASSOCIATIONS:
         for link in collection(event, collection_name):
             digi_hit = link.getFrom()
@@ -241,6 +292,17 @@ def extract_planar_hits(event, values, hit_mc_indices):
             values["layer"].append(0)
             values["phi"].append(0)
             values["stereo"].append(0)
+            # LOCAL MODIFICATION (fcc-mlpf): uncertainties + role (CLD-parity features)
+            values["drift_dist_err"].append(0.0)
+            values["pos_along_wire_err"].append(0.0)
+            values["wire_stereo"].append(0.0)
+            values["wire_azimuthal"].append(0.0)
+            values["hit_EDep_err"].append(float(digi_hit.getEDepError()))
+            sx, sy, sz = _planar_uncertainties(digi_hit)
+            values["hit_du"].append(sx)
+            values["hit_dv"].append(sy)
+            values["hit_dw"].append(sz)
+            values["hit_role"].append(PLANAR_ROLE[collection_name])
 
 
 def extract_particles(event, values, hit_mc_indices):
@@ -275,6 +337,9 @@ def extract_particles(event, values, hit_mc_indices):
         values["part_vertex_x"].append(vertex.x)
         values["part_vertex_y"].append(vertex.y)
         values["part_vertex_z"].append(vertex.z)
+        # LOCAL MODIFICATION (fcc-mlpf): canonical-schema requirements
+        values["part_charge"].append(float(particle.getCharge()))
+        values["part_sim_status"].append(int(particle.getSimulatorStatus()))
 
 
 def validate_event(values, event_number):
@@ -358,6 +423,8 @@ def main():
     total_particles = 0
     try:
         for event_number, event in enumerate(reader.get("events")):
+            if args.max_events and event_number >= args.max_events:   # LOCAL MODIFICATION (fcc-mlpf)
+                break
             values = new_event()
             hit_mc_indices = set()
             extract_drift_hits(event, metadata, values, hit_mc_indices)

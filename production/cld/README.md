@@ -1,6 +1,6 @@
 # CLD production guide — condor on lxplus
 
-> Produces EDM4hep files satisfying `docs/data_spec.md` (all three pipeline stages).
+> Produces EDM4hep files satisfying `validation/README.md` (all three pipeline stages).
 > Chain: Pythia8 (k4run) → ddsim (Geant4 full sim) → CLDReconstruction (digitization,
 > conformal tracking, Pandora) → single `*_REC.edm4hep.root` per job on EOS.
 > Based on B. Dudar's reference production (2026-09-29, 495 jobs × 10 ttbar events);
