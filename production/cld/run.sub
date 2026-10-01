@@ -27,5 +27,8 @@ transfer_input_files    = ""
 transfer_output_files   = ""
 
 # ---- scale here: n_events per job x number of jobs ----
+# Production convention (2026-10-01): 10 ev/job keeps files ~34 MB (<50 MB policy) and jobs
+# ~8 min; eviction-reruns are cheap (skip-if-exists). 10,000 jobs = 100k events ~ 340 GB.
+# Val-split convention: first 1,000 files of the sorted output list (10%) are held out.
 n_events = 10
-queue 5
+queue 10000
