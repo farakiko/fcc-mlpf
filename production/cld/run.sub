@@ -1,0 +1,31 @@
+# HTCondor submit file for CLD production (lxplus).
+# Before submitting:
+#   1. stage this directory to EOS:         ./stage_to_eos.sh   (sets STAGING_DIR contents)
+#   2. edit environment below (STAGING_DIR, OUTPUT_DIR)
+#   3. mkdir -p logs/out logs/err
+#   4. condor_submit run.sub
+# Validate output afterwards:  python ../../validation/audit_edm4hep.py <OUTPUT_DIR>/*.edm4hep.root
+
+executable = gen_sim_rec.sh
+arguments  = "$(Cluster).$(Process) $(n_events)"
+
+environment = "STAGING_DIR=/eos/user/f/fmokhtar/fcc-mlpf/production/cld OUTPUT_DIR=/eos/user/f/fmokhtar/fcc-mlpf/data/cld_tt"
+
+log    = logs/$(Cluster).log
+output = logs/out/$(Cluster).$(Process).log
+error  = logs/err/$(Cluster).$(Process).log
+
++AccountingGroup = "group_u_FCC.local_gen"
+MY.WantOS = "el9"
+
+# ~8 min / 10-event job measured (2026-09-29 reference production) -> microcentury (1 h) is safe
++JobFlavour = "microcentury"
+
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+transfer_input_files    = ""
+transfer_output_files   = ""
+
+# ---- scale here: n_events per job x number of jobs ----
+n_events = 10
+queue 5
