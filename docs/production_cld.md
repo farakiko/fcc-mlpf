@@ -4,7 +4,8 @@
 > Chain: Pythia8 (k4run) → ddsim (Geant4 full sim) → CLDReconstruction (digitization,
 > conformal tracking, Pandora) → single `*_REC.edm4hep.root` per job on EOS.
 > Based on B. Dudar's reference production (2026-09-29, 495 jobs × 10 ttbar events);
-> his original script is kept verbatim at `production/cld/gen_sim_rec_bdudar_reference.sh`.
+> `gen_sim_rec.sh` is a parameterized adaptation of his script (verbatim original in the
+> initial git commit, and at `/eos/home-b/bdudar/1-projects/farouk_tt_cld_tracking/`).
 
 ## Pinned versions & provenance (do not float silently)
 

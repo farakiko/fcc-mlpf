@@ -24,7 +24,8 @@ the headline measurement.
 | `docs/data_spec.md` | **the authoritative list of EDM4hep collections** each stage needs, with the why, naming pitfalls, and porting rules |
 | `docs/production_cld.md` | how to produce compliant CLD samples with condor on lxplus (pinned versions, costs, smoke test) |
 | `production/cld/` | the complete, vendored production: job script, submit file, Pythia card, CLDConfig, CLD_o2_v08 geometry |
-| `validation/audit_edm4hep.py` | executable version of the data spec — run on every delivery; exit 0 = compliant |
+| `production/idea/` | IDEA chain (vendored from A. De Vita's `MLBased-FCC-TrackFinder-training`): condor production + the SenseWire→L/R feature extraction; collection map + existing 500k-event Z-pole dataset documented in its README |
+| `validation/audit_edm4hep.py` | executable version of the data spec — run on every delivery (`--detector cld|idea`); exit 0 = compliant |
 | `pipeline/` | the three training stages + fine-tuning (being ported from the development repo) |
 
 ## Status (2026-10-01)
@@ -38,7 +39,9 @@ the headline measurement.
   4 GPU-hours. Mid-pT efficiency gap closing with data/epochs (training was data-limited).
 - **[C] / [PF]**: design fixed (energy-weighted + fractional-capable slot decoder; calo-entrance
   targets per the validated CLD target definition); implementation next.
-- **IDEA**: drift-chamber input features in collaboration with A. De Vita (GGTF/Genfit2).
+- **IDEA**: production chain + feature extraction vendored from A. De Vita (GGTF/Genfit2);
+  his existing **500k-event Z→qq̄ @ 91 GeV digi dataset audited PASS** (100% drift-chamber
+  truth linking, ~3.6k tracker hits/event) — [T] bring-up on IDEA needs no new simulation.
 
 ## Quick start (production)
 

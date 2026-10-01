@@ -41,11 +41,24 @@ CLD = dict(
     # [PF]
     mc=["MCParticles", "_MCParticles_parents", "_MCParticles_daughters"],
     pf_base=["PandoraPFOs", "RecoMCTruthLink"],
+    # links beyond trk_rel/calo_link whose from/to must resolve
+    extra_links=["SiTracksMCTruthLink"],
+)
+
+# IDEA tracking digi set (A. De Vita's production; tracking-only: no calo, no baseline tracks).
+# zip order digi <-> rel <-> sim must stay aligned (truth-chain check relies on it).
+IDEA = dict(
+    trk_digi=["DCH_DigiCollection", "VTXBDigis", "VTXDDigis", "SiWrBDigis", "SiWrDDigis"],
+    trk_rel=["DCH_DigiSimAssociationCollection", "VTXBSimDigiLinks", "VTXDSimDigiLinks",
+             "SiWrBSimDigiLinks", "SiWrDSimDigiLinks"],
+    trk_sim=["DCHCollection", "VertexBarrelCollection", "VertexEndcapCollection",
+             "SiWrBCollection", "SiWrDCollection"],
+    mc=["MCParticles", "_MCParticles_parents", "_MCParticles_daughters"],
 )
 MC_BRANCHES = ["PDG", "generatorStatus", "simulatorStatus", "charge", "mass",
                "vertex.x", "endpoint.x", "momentum.x", "momentumAtEndpoint.x",
                "parents_begin", "daughters_begin"]
-DETECTORS = {"cld": CLD}
+DETECTORS = {"cld": CLD, "idea": IDEA}
 
 
 def collection_ids(f):
@@ -85,7 +98,7 @@ def audit(fp, det, quick=False):
 
     # ---- 2. every relation target resolves ----
     print("-- relation resolution --")
-    for r in det["trk_rel"] + ["CalohitMCTruthLink", "SiTracksMCTruthLink"]:
+    for r in det["trk_rel"] + det.get("calo_link", []) + det.get("extra_links", []):
         if r not in stored:
             continue
         for side in ("from", "to"):
@@ -125,14 +138,15 @@ def audit(fp, det, quick=False):
     if not ok:
         fails.append(f"tracker truth-link fraction {frac:.1f}% < 95%")
 
-    # ---- 4. calo links ----
-    print("-- calo truth --")
-    w = t["CalohitMCTruthLink/CalohitMCTruthLink.weight"].array(entry_stop=3)
-    fro = np.asarray(ak.flatten(t["_CalohitMCTruthLink_from/_CalohitMCTruthLink_from.index"].array(entry_stop=1)))
-    u, c = np.unique(fro, return_counts=True)
-    print(f"  [OK ] CalohitMCTruthLink: {sum(len(x) for x in w)} links (3 ev), "
-          f"{100*(c>1).mean():.1f}% multi-link hits (fractional truth), "
-          f"weights [{float(ak.min(w)):.2f}, {float(ak.max(w)):.2f}]")
+    # ---- 4. calo links (only for detectors whose spec includes calo) ----
+    if "calo_link" in det:
+        print("-- calo truth --")
+        w = t["CalohitMCTruthLink/CalohitMCTruthLink.weight"].array(entry_stop=3)
+        fro = np.asarray(ak.flatten(t["_CalohitMCTruthLink_from/_CalohitMCTruthLink_from.index"].array(entry_stop=1)))
+        u, c = np.unique(fro, return_counts=True)
+        print(f"  [OK ] CalohitMCTruthLink: {sum(len(x) for x in w)} links (3 ev), "
+              f"{100*(c>1).mean():.1f}% multi-link hits (fractional truth), "
+              f"weights [{float(ak.min(w)):.2f}, {float(ak.max(w)):.2f}]")
 
     # ---- 5. stats ----
     nh = sum(len(x) for x in t[f"{det['trk_digi'][0]}/{det['trk_digi'][0]}.cellID"].array(entry_stop=5))

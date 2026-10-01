@@ -59,6 +59,15 @@ collections — names differ, the audit script takes a per-detector collection m
 hits fill the same roles with modality-specific payloads (see the mlpf repo's
 `trackml_data_contract.md` for the downstream schema).
 
+**IDEA (implemented 2026-10-01, `--detector idea`)** — tracking-only digi set from
+A. De Vita's production (chain + collection map + version pins: `production/idea/README.md`):
+digi `DCH_DigiCollection`/`VTXB(D)Digis`/`SiWrB(D)Digis` → links
+`DCH_DigiSimAssociationCollection`/`*SimDigiLinks` → sim `DCHCollection`/`Vertex*`/`SiWr*`
+(each with `_particle` → MCParticles). Existing dataset: 999 files × 500 Z→qq̄ events @ 91 GeV
+(`/eos/experiment/fcc/ee/simulation/key4hep_2026_09_10/91GeV/IDEA_o1_v4/fixedDataset/`),
+audited PASS, 100% DCH truth linking, ~3.6k tracker hits/event. No calo groups, no baseline
+tracks (pre-reconstruction) — the audit skips those groups for detectors without them.
+
 ## 6. Known pitfalls (from the CLD forensics, 2026-09/10)
 
 1. **Dropped sim collections**: default output-slimming kills the truth chain (pre-2026-09
