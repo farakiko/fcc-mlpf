@@ -1,0 +1,15 @@
+# Condor postprocessing: CLD REC -> canonical parquet (NJOBS stripes, resumable).
+# edit REPO/OUTDIR; mkdir -p logs/out logs/err; condor_submit run_pp_cld.sub
+executable = pp_convert.sh
+arguments  = "cld $(Process) $(njobs)"
+environment = "REPO=/afs/cern.ch/user/f/fmokhtar/fcc-mlpf INPUTS=/eos/experiment/fcc/ee/simulation/key4hep_2026_04_08/365GeV/CLD_o2_v08/rec/ttbar_mlpf/*.edm4hep.root OUTDIR=/eos/user/f/fmokhtar/fcc-mlpf/data/derived/cld_ttbar STACK_LABEL=key4hep-2026-04-08 FILES_PER_CHUNK=20"
+log    = logs/$(Cluster).log
+output = logs/out/$(Cluster).$(Process).log
+error  = logs/err/$(Cluster).$(Process).log
++AccountingGroup = "group_u_FCC.local_gen"
+MY.WantOS = "el9"
++JobFlavour = "longlunch"
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+njobs = 20
+queue 20

@@ -1,0 +1,15 @@
+# Condor postprocessing: IDEA o1 digi -> canonical parquet (needs key4hep nightlies).
+# ~20 min/file; 150 files / 25 stripes ~ 6 files/job ~ 2h -> workday flavour.
+executable = pp_convert.sh
+arguments  = "idea $(Process) $(njobs)"
+environment = "REPO=/afs/cern.ch/user/f/fmokhtar/fcc-mlpf INPUTS=/eos/experiment/fcc/ee/simulation/key4hep_2026_09_10/91GeV/IDEA_o1_v4/fixedDataset/Zuds/digi/output_IDEA_DIGI_*_train.root OUTDIR=/eos/user/f/fmokhtar/fcc-mlpf/data/derived/idea_o1_zqq STACK_LABEL=sw-nightlies-2026-09-13 FILES_PER_CHUNK=1 MAX_FILES=150 K4H_NIGHTLY=2026-09-13"
+log    = logs/$(Cluster).log
+output = logs/out/$(Cluster).$(Process).log
+error  = logs/err/$(Cluster).$(Process).log
++AccountingGroup = "group_u_FCC.local_gen"
+MY.WantOS = "el9"
++JobFlavour = "workday"
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+njobs = 25
+queue 25

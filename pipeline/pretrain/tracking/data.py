@@ -56,7 +56,16 @@ def load_parquet(path, pt_cut=0.1, min_hits=3):
     md = {k.decode(): v.decode() for k, v in (t.schema.metadata or {}).items()}
     det = md.get("detector", "unknown")
     has_base = "bhit_track" in t.column_names
-    cols = [c for c in t.column_names]
+    # [T] reads ONLY its columns -- files may also carry calo/other stage groups (parquet is
+    # columnar; unselected groups cost nothing). Keep this list in sync with featurize().
+    NEED = ["thit_x", "thit_y", "thit_z", "thit_role", "thit_modality", "thit_edep",
+            "thit_du", "thit_dv", "thit_dw", "thit_drift", "thit_drift_err",
+            "thit_alongwire_err", "thit_wire_stereo", "thit_wire_azim",
+            "thit_left_x", "thit_left_y", "thit_left_z",
+            "thit_right_x", "thit_right_y", "thit_right_z",
+            "thit_nclusters", "thit_mc",
+            "mc_px", "mc_py", "mc_charge"] + (["bhit_track"] if has_base else [])
+    cols = [c for c in NEED if c in t.column_names]
     events = []
     for i in range(t.num_rows):
         c = {name: np.asarray(t.column(name)[i].as_py()) for name in cols}
