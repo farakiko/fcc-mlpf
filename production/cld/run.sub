@@ -9,7 +9,13 @@
 executable = gen_sim_rec.sh
 arguments  = "$(Cluster).$(Process) $(n_events)"
 
-environment = "STAGING_DIR=/eos/user/f/fmokhtar/fcc-mlpf/production/cld OUTPUT_DIR=/eos/user/f/fmokhtar/fcc-mlpf/data/cld_tt"
+# NOTE: the running 100k campaign writes to the personal-EOS path below; do NOT change
+# OUTPUT_DIR mid-campaign (skip-if-exists protection). After completion, migrate to the
+# FCC shared-space policy path and use it for all future campaigns:
+#   /eos/experiment/fcc/ee/simulation/key4hep_2026_04_08/365GeV/CLD_o2_v08/rec/ttbar_mlpf
+# SEED_BASE: REQUIRED for new campaigns -- pick a block disjoint from campaigns/*.seeds.txt
+# (see campaigns/CAMPAIGNS.md rule 2) and record the campaign in the ledger after it runs.
+environment = "STAGING_DIR=/eos/user/f/fmokhtar/fcc-mlpf/production/cld OUTPUT_DIR=/eos/user/f/fmokhtar/fcc-mlpf/data/cld_tt SEED_BASE="
 
 log    = logs/$(Cluster).log
 output = logs/out/$(Cluster).$(Process).log

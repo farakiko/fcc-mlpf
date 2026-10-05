@@ -5,7 +5,7 @@
 # 4) audit: python ../../validation/audit_edm4hep.py --detector idea_o2 <OUTPUT_DIR>/*.root
 executable = gen_sim_digireco.sh
 arguments  = "$(Cluster).$(Process) $(n_events)"
-environment = "STAGING_DIR=/eos/user/f/fmokhtar/fcc-mlpf/production/idea_o2 OUTPUT_DIR=/eos/user/f/fmokhtar/fcc-mlpf/data/idea_o2_zqq K4H_NIGHTLY=2026-10-04"
+environment = "STAGING_DIR=/eos/user/f/fmokhtar/fcc-mlpf/production/idea_o2 OUTPUT_DIR=/eos/experiment/fcc/ee/simulation/key4hep_nightlies_2026_10_04/91GeV/IDEA_o2_v01/rec/Zqq_mlpf K4H_NIGHTLY=2026-10-04"
 log    = logs/$(Cluster).log
 output = logs/out/$(Cluster).$(Process).log
 error  = logs/err/$(Cluster).$(Process).log

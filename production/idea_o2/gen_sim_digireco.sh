@@ -35,7 +35,12 @@ sed -i "s|/path/to/pythia/card.cmd|card.cmd|" pythia.py
 printf '\nhepmc_writer.Filename = "gen.hepmc"\n' >> pythia.py
 xrdcp -sr "${STAGING_DIR}/cfg" .
 
-seed=$((1 + (0x$(openssl rand -hex 4) % 900000000)))
+if [ -n "${SEED_BASE:-}" ]; then
+  proc=${job_id##*.}
+  seed=$((SEED_BASE + proc))
+else
+  seed=$((1 + (0x$(openssl rand -hex 4) % 900000000)))
+fi
 printf '\nRandom:setSeed=on\nRandom:seed=%s\n' "$seed" >> card.cmd
 echo "pythia seed=${seed}"
 

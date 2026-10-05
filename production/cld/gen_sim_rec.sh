@@ -38,8 +38,16 @@ xrdcp -s  "${STAGING_DIR}/pythia.py" .
 xrdcp -sr "${STAGING_DIR}/$(dirname ${GEOMETRY})" .
 xrdcp -sr "${STAGING_DIR}/CLDConfig" .
 
-# per-job random seed
-seed=$((1 + (0x$(openssl rand -hex 4) % 900000000)))
+# per-job seed. DETERMINISTIC when SEED_BASE is set (campaign policy, see
+# campaigns/CAMPAIGNS.md: seed = SEED_BASE + process index -> contiguous auditable block;
+# verify disjointness against campaigns/*.seeds.txt BEFORE submitting). Falls back to the
+# legacy random scheme if SEED_BASE is unset.
+if [ -n "${SEED_BASE:-}" ]; then
+  proc=${job_id##*.}                          # job_id = Cluster.Process
+  seed=$((SEED_BASE + proc))
+else
+  seed=$((1 + (0x$(openssl rand -hex 4) % 900000000)))
+fi
 sed -i "s/^Random:seed.*/Random:seed = ${seed}/" card.cmd
 echo "pythia seed=${seed}"
 

@@ -28,6 +28,19 @@ the output must pass `validation/audit_edm4hep.py` — that defines "compliant".
 5. **Provenance**: pinned software stack + vendored configs/geometry in-repo; CLD jobs
    write a `.provenance.txt` sidecar per file (release, geometry, card, seed, date).
 
+## Storage policy (FCC shared EOS — granted 2026-10)
+
+Production output goes to the FCC shared space `/eos/experiment/fcc/ee/` (no per-user quota,
+~19 TB shared — **use wisely**: write only needed collections, delete obsolete files, prefer
+common samples). Mandatory layout:
+```
+/eos/experiment/fcc/ee/{simulation|generation}/<key4hep_release>/<ENERGY>/<EXPERIMENT>/<STAGE>/<SAMPLE>/
+```
+Ours: `simulation/key4hep_2026_04_08/365GeV/CLD_o2_v08/rec/ttbar_mlpf/` and
+`simulation/key4hep_nightlies_2026_10_04/91GeV/IDEA_o2_v01/rec/Zqq_mlpf/`.
+Derived training parquets are not covered by the policy; keep them in your own space or
+agree a `derived/` convention before writing there.
+
 ## Adding a new detector (or a variant of an existing one)
 
 1. Copy the closest existing subdirectory; swap the geometry compact files (for a
