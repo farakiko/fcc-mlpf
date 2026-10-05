@@ -42,6 +42,17 @@ INT_COLS = {"thit_role", "thit_modality", "thit_mc", "thit_secondary", "thit_ove
 META_KEYS = ["schema_version", "detector", "B_tesla", "stack", "source"]
 
 
+def _best_codec():
+    """First available compression codec (some builds, e.g. LCG pyarrow, lack zstd)."""
+    for c in ("zstd", "snappy", "gzip"):
+        try:
+            if pa.Codec.is_available(c):
+                return c
+        except Exception:
+            pass
+    return None
+
+
 def write_events(path, events, meta, row_group_size=25):
     """events: list of per-event dicts {column: 1d array}; meta: dict with META_KEYS."""
     missing = [k for k in META_KEYS if k not in meta]
@@ -54,7 +65,9 @@ def write_events(path, events, meta, row_group_size=25):
         data[c] = ak.Array([np.asarray(e[c], dtype=dt) for e in events])
     table = pa.table({c: ak.to_arrow(v, extensionarray=False) for c, v in data.items()})
     table = table.replace_schema_metadata({k: str(v) for k, v in meta.items()})
-    pq.write_table(table, path, compression="zstd", compression_level=1,
+    codec = _best_codec()
+    pq.write_table(table, path, compression=codec,
+                   compression_level=1 if codec == "zstd" else None,
                    row_group_size=row_group_size)
     return len(events)
 
