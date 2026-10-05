@@ -80,8 +80,17 @@ def load_parquet(path, pt_cut=0.1, min_hits=3):
         remap = {int(k): j for j, k in enumerate(keep)}
         yl = np.array([remap.get(int(t_), -1) for t_ in y_mc], dtype=np.int64)
         allpt = np.hypot(c["mc_px"], c["mc_py"])
+        # raw coords + per-hit sigma for the tier-1 helix fit (fit.py) at eval time.
+        # v0: isotropic sigma from the silicon plane errors; wire hits get drift_err
+        # (their xyz is the WIRE point -- DCH fitting is a known v0 caveat, see README).
+        sig = np.sqrt((c["thit_du"] ** 2 + c["thit_dv"] ** 2) / 2.0)
+        if "thit_drift_err" in c:
+            wire = c["thit_modality"] > 0.5
+            sig = np.where(wire, c["thit_drift_err"], sig)
         ev = dict(x=x, etaphi=etaphi, y=yl, K=len(keep),
                   track_pt=np.array([allpt[int(k)] for k in keep], np.float32),
+                  fit_xyz=np.stack([c["thit_x"], c["thit_y"], c["thit_z"]], 1).astype(np.float64),
+                  fit_sig=np.clip(sig, 1e-3, None).astype(np.float64),
                   detector=det)
         if has_base:
             ev["base_y"] = c["bhit_track"].astype(np.int64)

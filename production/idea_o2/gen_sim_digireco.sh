@@ -53,7 +53,7 @@ ddsim --compactFile $K4GEO/FCCee/IDEA/compact/IDEA_o2_v01/IDEA_o2_v01.xml \
   --random.seed ${seed} \
   --outputFile sim.edm4hep.root
 
-k4run cfg/run_digi_reco_nocluster.py \
+k4run cfg/run_digi_reco_nocluster_nolinks.py \
   --IOSvc.Input sim.edm4hep.root \
   --IOSvc.Output digi_reco.edm4hep.root
 

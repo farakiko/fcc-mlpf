@@ -100,21 +100,24 @@ def _tracks(lab, min_hits=3):
 
 
 def _dm(recos, gts):
-    matched, fakes = set(), 0
+    matched, fakes, pairs = set(), 0, []
     for s, hits in recos.items():
         ok = [t for t, g in gts.items()
               if len(hits & g) / len(hits) > 0.5 and len(hits & g) / len(g) > 0.5]
         if ok:
             matched.add(ok[0])
+            pairs.append((s, ok[0]))
         else:
             fakes += 1
-    return len(gts), len(matched), len(recos), fakes
+    return (len(gts), len(matched), len(recos), fakes), pairs
 
 
 @torch.no_grad()
-def evaluate(model, evs, dev, thr=0.5):
-    """-> {detector: (model_eff, model_fake, base_eff|None, base_fake|None, n_gt)}"""
-    acc = {}
+def evaluate(model, evs, dev, thr=0.5, fit_pt=False):
+    """-> {detector: (model_eff, model_fake, base_eff|None, base_fake|None, n_gt)}
+    fit_pt=True additionally runs the tier-1 helix fit (fit.py) on every DM-matched
+    found track and returns {detector: rel_pt_residuals} as a second dict."""
+    acc, res = {}, {}
     for ev in evs:
         d = ev["detector"]
         s = acc.setdefault(d, np.zeros(8))
@@ -123,16 +126,31 @@ def evaluate(model, evs, dev, thr=0.5):
         P = torch.sigmoid(A); P[torch.sigmoid(act) <= thr] = 0.0
         pred = np.where((P.max(0).values > thr).cpu().numpy(), P.argmax(0).cpu().numpy(), -1)
         gts = _tracks(ev["y"], 1)
-        s[:4] += _dm(_tracks(pred), gts)
+        recos = _tracks(pred)
+        counts, pairs = _dm(recos, gts)
+        s[:4] += counts
         if "base_y" in ev:
-            s[4:8] += _dm(_tracks(ev["base_y"]), gts)
+            s[4:8] += _dm(_tracks(ev["base_y"]), gts)[0]
+        if fit_pt:
+            from fit import fit_helix
+            for slot, t in pairs:
+                hr = sorted(recos[slot])
+                if len(hr) < 4:
+                    continue
+                xyz = ev["fit_xyz"][hr]
+                w = torch.from_numpy(1.0 / ev["fit_sig"][hr] ** 2)
+                try:
+                    r = fit_helix(torch.from_numpy(xyz[:, :2]), torch.from_numpy(xyz[:, 2]), w, w)
+                except Exception:
+                    continue
+                res.setdefault(d, []).append(float(r["pt"]) / ev["track_pt"][t] - 1.0)
     out = {}
     for d, s in acc.items():
         me, mf = s[1] / max(s[0], 1), s[3] / max(s[2], 1)
         be = s[5] / max(s[4], 1) if s[4] else None
         bf = s[7] / max(s[6], 1) if s[4] else None
         out[d] = (me, mf, be, bf, int(s[0]))
-    return out
+    return (out, res) if fit_pt else out
 
 
 def main():
@@ -202,6 +220,14 @@ def main():
                 torch.save(dict(state_dict=model.state_dict(), args=vars(args)),
                            os.path.join(args.outdir, "best.pt"))
         print(line, flush=True)
+    # final pass with the tier-1 helix fit on matched found tracks: fitted-pT resolution
+    model.eval()
+    _, fres = evaluate(model, val, dev, fit_pt=True)
+    for d, rr in sorted(fres.items()):
+        rr = np.array(rr)
+        q = np.percentile(rr, [25, 50, 75])
+        print(f"fitted-pT ({d}, {len(rr)} matched tracks): median {q[1]:+.4f}  "
+              f"sigma-eq {(q[2]-q[0])/1.349:.4f}", flush=True)
     print(("CHECK PASSED: losses finite, both-detector eval ran" if args.check
            else f"best mean DM eff {best:.3f} -> {args.outdir}/best.pt"), flush=True)
 

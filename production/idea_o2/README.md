@@ -65,12 +65,17 @@ channel as a robustness knob. State this caveat on every plot made from o2 files
 
 ## Status / next
 
-- **TEMPORARY WORKAROUND**: production currently uses `cfg/run_digi_reco_nocluster.py`
-  because the classical ECAL clustering **hangs upstream** (`TrackDrivenClusterSeeding`
-  infinite loop on zero-position track-seeded clusters; see `bugreport/`, reported to the
-  author). The policy remains to STORE the classical baseline in production for easy
-  comparison (as CLD does with Pandora) — switch the job script back to the original
-  `cfg/run_digi_reco.py` as soon as the fix lands upstream.
+- **TEMPORARY WORKAROUNDS** (production default = `cfg/run_digi_reco_nocluster_nolinks.py`),
+  both pending upstream fixes, both to be reverted when fixed — the policy remains to run the
+  full official chain incl. the classical baseline:
+  1. classical ECAL clustering **hangs** (`TrackDrivenClusterSeeding` infinite loop on
+     zero-position track-seeded clusters) → removed from the sequence;
+  2. `CreateTruthLinks` costs **>2.4 CPU-h/event** (gdb: std::map hot loop over the
+     **~1.06M SCEPCal contribution records/event** — one per sensitive Geant4 step) →
+     removed; truth is derived OFFLINE in postprocessing from the digi→sim links + sim-hit
+     contributions (all in the output via `keep *`), vectorized (seconds, not hours).
+  Evidence for both in `bugreport/`; proposed upstream fixes: seed-position init (1);
+  SD-level contribution merging per (particle × cell) and/or memoized backtracking (2).
 - Measured (2-event smoke, nightlies 2026-10-04): **full sim ≈ 19 min/event** (×68 vs
   o1 tracker-only) and ~178 MB/event at sim level (transient; only digi_reco is kept).
 - [ ] postprocessing: [T] adapter = name-map of the o1 adapter; [C] schema (`chit_*` with a

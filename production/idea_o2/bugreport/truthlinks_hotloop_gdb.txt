@@ -1,0 +1,10 @@
+CreateTruthLinks hot loop (nightlies 2026-10-04, k4RecCalorimeter develop @ f1f72438)
+Observed: >2.4 CPU-hours on event 1 of digi+reco (2-event Z->qq file), 99% CPU, 6.4 GB RSS.
+Input scale: _SCEPCal_MainEdep_contributions = 1,056,203 records in event 0
+             (_LumiCalCollection_contributions = 957,859)
+gdb bt (top frames):
+#0 std::_Rb_tree_insert_and_rebalance (libstdc++)
+#1 std::_Rb_tree<unsigned long, std::pair<unsigned long const, double>>::_M_emplace_hint_unique
+   (libk4RecCalorimeterPlugins.so)
+#2 CreateTruthLinks::execute(EventContext const&) const (libk4RecCalorimeterPlugins.so)
+#3 Gaudi::Algorithm::sysExecute ...

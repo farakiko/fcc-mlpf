@@ -54,6 +54,49 @@ a new detector's hits land in the right representation automatically. Planned ex
 (foundation plan): explicit physical conditioning scalars (B-field, material scales) appended
 when the corpus contains detectors where they differ — currently both are 2 T solenoids.
 
+## Track fitting — tier 1 (`fit.py`, `validate_fit.py`)
+
+`fit.py` is the **tier-1 fitter** of the three-tier design: an analytic, differentiable,
+weighted helix fit in torch — **not a neural network**. Kasa algebraic circle seed → 3
+Gauss–Newton iterations on the geometric residual (fixed count ⇒ differentiable) + weighted
+s–z line; covariance = (JᵀWJ)⁻¹ propagated to perigee parameters. Detector input: **B only**;
+hit uncertainties travel in the data (du/dv). Outputs follow edm4hep TrackState conventions:
+`d0, phi0, omega, z0, tanLambda` (+ diagonal σ's, pT, calo-face extrapolation via
+`extrapolate_to_r`). ~0.5 ms/track in a plain CPU python loop including the covariance
+jacobian — batching/vmap when the training loop needs it.
+
+**Validated on CLD** (`validate_fit.py`, 48 REC files, 20.6k track pairs, 2026-10-05):
+against the conformal tracker's own Kalman fit (`SiTracks_Refitted` AtIP state) **on
+identical hit sets**:
+
+| parameter | median \|tier1 − KF\| | notes |
+|---|---|---|
+| d0 | 11 µm | corr +0.994 |
+| φ | 0.37 mrad | |
+| ω (curvature) | 0.04–0.3 % rel. for pT>1 GeV | **flat in pT up to 100 GeV** (−0.01% bias at 20–100) |
+| z0 | 36 µm | |
+| tanλ | 1.0×10⁻³ | |
+
+Truth closure (truth-assigned hit sets): pT resolution 0.5–0.6 % (1–20 GeV); degrades >20 GeV
+because truth hit sets contain post-interaction hits (kinks) a global fit can't reject — the
+measured motivation for outlier down-weighting (DAF-like / learned soft assignment).
+
+**Known tier-1 limitations, measured (= the tier-1b work order):**
+- **Covariance omits multiple scattering**: pulls are honest only where measurement error
+  dominates; σ(d0) is 12× too small at pT<1 GeV, 1.4× at pT>5 GeV. Tier 1b (a small
+  detector-conditioned residual/calibration head) owns this.
+- **Charge sign flips on 0.41 %** of tracks (median pT 0.34 GeV — loopers, where the
+  inner→outer hit-flow heuristic for rotation sense fails).
+
+Tier 2 (Genfit2 DAF via k4RecTracker, IDEA) stays the production-grade reference; tier 3
+(calo-face state) is the same helix extrapolated.
+
+```bash
+# rerun the validation (needs REC ROOT files, not parquet — it compares vs stored KF states)
+# figure + report land in <repo>/plots/trk_fit/ by default
+python validate_fit.py --data-dir <dir with *.edm4hep.root> --nfiles 48
+```
+
 ### Known v0 simplifications
 
 - The geometric block (0–6) for a DCH hit is the **wire point**, with the true crossing
