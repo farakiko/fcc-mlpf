@@ -1,0 +1,24 @@
+=== unique error messages (from 1M+ lines) ===
+TCling::LoadPCM      ERROR ROOT PCM /cvmfs/sw-nightlies.hsf.org/key4hep/releases/2026-02-26/x86_64-almalinux9-gcc14.2.0-opt/genfit/02-00-05-qrj4su/lib64/libGBLRootDict_rdict.pcm file does not exist
+TCling::LoadPCM      ERROR ROOT PCM /cvmfs/sw-nightlies.hsf.org/key4hep/releases/2026-02-26/x86_64-almalinux9-gcc14.2.0-opt/genfit/02-00-05-qrj4su/lib64/libcoreRootDict_rdict.pcm file does not exist
+TCling::LoadPCM      ERROR ROOT PCM /cvmfs/sw-nightlies.hsf.org/key4hep/releases/2026-02-26/x86_64-almalinux9-gcc14.2.0-opt/genfit/02-00-05-qrj4su/lib64/libeventDisplayRootDict_rdict.pcm file does not exist
+TCling::LoadPCM      ERROR ROOT PCM /cvmfs/sw-nightlies.hsf.org/key4hep/releases/2026-02-26/x86_64-almalinux9-gcc14.2.0-opt/genfit/02-00-05-qrj4su/lib64/libfittersRootDict_rdict.pcm file does not exist
+TCling::LoadPCM      ERROR ROOT PCM /cvmfs/sw-nightlies.hsf.org/key4hep/releases/2026-02-26/x86_64-almalinux9-gcc14.2.0-opt/genfit/02-00-05-qrj4su/lib64/libmeasurementsRootDict_rdict.pcm file does not exist
+TCling::LoadPCM      ERROR ROOT PCM /cvmfs/sw-nightlies.hsf.org/key4hep/releases/2026-02-26/x86_64-almalinux9-gcc14.2.0-opt/genfit/02-00-05-qrj4su/lib64/libtrackRepsRootDict_rdict.pcm file does not exist
+TCling::LoadPCM      ERROR ROOT PCM /cvmfs/sw-nightlies.hsf.org/key4hep/releases/2026-02-26/x86_64-almalinux9-gcc14.2.0-opt/genfit/02-00-05-qrj4su/lib64/libutilitiesRootDict_rdict.pcm file does not exist
+TrackDrivenClus...   ERROR ClusterSeedingBase::openingAngleDist: zero-length vector! Cluster (x,y,z,E) = (0,0,0,0) Point (x,y,z) = (-10.0738,2269.9,-1801.31)
+
+=== first occurrence with 10 lines of context ===
+8560-createHcalEndca...    INFO createHcalEndcapLCherenCells: calibration constant = 0.014652
+8561-ClusterSeedMerge      INFO ClusterSeedMerging: MergeDistance = 45 mm
+8562-CreateTruthLink...    INFO CreateTruthLinks initialized
+8563-CreateTruthLink...    INFO CreateTruthLinks initialized
+8564-ApplicationMgr        INFO Application Manager Initialized successfully
+8565-ApplicationMgr        INFO Application Manager Started successfully
+8566:TrackDrivenClus...   ERROR ClusterSeedingBase::openingAngleDist: zero-length vector! Cluster (x,y,z,E) = (0,0,0,0) Point (x,y,z) = (-1255.47,-1897.11,-223.386)
+8567-TrackDrivenClus...   ERROR ClusterSeedingBase::openingAngleDist: zero-length vector! Cluster (x,y,z,E) = (0,0,0,0) Point (x,y,z) = (-36.9909,565.927,2474.14)
+8568-TrackDrivenClus...   ERROR ClusterSeedingBase::openingAngleDist: zero-length vector! Cluster (x,y,z,E) = (0,0,0,0) Point (x,y,z) = (-1995.84,-1089.75,737.192)
+8569-TrackDrivenClus...   ERROR ClusterSeedingBase::openingAngleDist: zero-length vector! Cluster (x,y,z,E) = (0,0,0,0) Point (x,y,z) = (-752.989,-1484.49,2470.34)
+
+=== totals ===
+1023128

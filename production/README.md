@@ -8,7 +8,8 @@ the output must pass `validation/audit_edm4hep.py` — that defines "compliant".
 | detector | chain | pipeline stages served | guide |
 |---|---|---|---|
 | **CLD** | Pythia → ddsim (CLD_o2_v08) → CLDReconstruction (tracking + Pandora) | **[T] + [C] + [PF]** (full truth incl. fractional calo) | [`cld/README.md`](cld/README.md) |
-| **IDEA** | Pythia → ddsim (IDEA_o1_v04, calo off) → tracker digitizer → graph parquet | **[T] only** (calo sim exists behind a flag; DR digitization pending) | [`idea/README.md`](idea/README.md) |
+| **IDEA o1** | Pythia → ddsim (IDEA_o1_v04, calo off) → tracker digitizer → graph parquet | **[T] only** | [`idea/README.md`](idea/README.md) |
+| **IDEA o2** | Pythia → ddsim (IDEA_o2_v01, **full sim incl. dual-readout calo**) → digi+reco | **[T] + [C] + [PF]-prep** (SCEPCal+DR digis, truth links, truth tracks w/ calo state, ECAL clusters) | [`idea_o2/README.md`](idea_o2/README.md) |
 
 ## The common pattern (all detectors)
 

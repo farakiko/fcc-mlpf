@@ -55,10 +55,27 @@ IDEA = dict(
              "SiWrBCollection", "SiWrDCollection"],
     mc=["MCParticles", "_MCParticles_parents", "_MCParticles_daughters"],
 )
+# IDEA o2 (SCEPCal + DR HCAL; production/idea_o2): ONE file serves [T]+[C]+[PF]-prep.
+IDEA_O2 = dict(
+    trk_digi=["DCHDigis", "VTXBDigis", "VTXDDigis", "SiWrBDigis", "SiWrDDigis", "MSTrackerHits"],
+    trk_rel=["DCHDigisSimAssociationCollection", "VTXBSimDigiLinks", "VTXDSimDigiLinks",
+             "SiWrBSimDigiLinks", "SiWrDSimDigiLinks", "MSTrackerHitRelations"],
+    trk_sim=["DCHCollection", "VertexBarrelCollection", "VertexEndcapCollection",
+             "SiWrBCollection", "SiWrDCollection", "MuonSystemCollection"],
+    calo_digi=["SCEPCal_digi_scint", "SCEPCal_digi_cheren", "DRBTScin_digi", "DRBTCher_digi",
+               "DRETScinLeft_digi", "DRETScinRight_digi", "DRETCherLeft_digi", "DRETCherRight_digi"],
+    calo_link=["SCEPCal_CaloHitMCParticleLinks", "DRTube_CaloHitMCParticleLinks"],
+    calo_sim=["SCEPCal_MainEdep", "DRTubeEdep"],
+    mc=["MCParticles", "_MCParticles_parents", "_MCParticles_daughters"],
+    pf_base=["TracksFromGenParticles", "TracksFromGenParticlesAssociation"],
+    # NOTE: TopoGrownClusters + EcalClusterMCParticleLinks (classical [C] baseline) are
+    # TEMPORARILY not required: upstream clustering hang (see production/idea_o2/bugreport/).
+    # Move them back into pf_base once the fix lands and production re-enables clustering.
+)
 MC_BRANCHES = ["PDG", "generatorStatus", "simulatorStatus", "charge", "mass",
                "vertex.x", "endpoint.x", "momentum.x", "momentumAtEndpoint.x",
                "parents_begin", "daughters_begin"]
-DETECTORS = {"cld": CLD, "idea": IDEA}
+DETECTORS = {"cld": CLD, "idea": IDEA, "idea_o2": IDEA_O2}
 
 
 def collection_ids(f):
@@ -141,12 +158,15 @@ def audit(fp, det, quick=False):
     # ---- 4. calo links (only for detectors whose spec includes calo) ----
     if "calo_link" in det:
         print("-- calo truth --")
-        w = t["CalohitMCTruthLink/CalohitMCTruthLink.weight"].array(entry_stop=3)
-        fro = np.asarray(ak.flatten(t["_CalohitMCTruthLink_from/_CalohitMCTruthLink_from.index"].array(entry_stop=1)))
-        u, c = np.unique(fro, return_counts=True)
-        print(f"  [OK ] CalohitMCTruthLink: {sum(len(x) for x in w)} links (3 ev), "
-              f"{100*(c>1).mean():.1f}% multi-link hits (fractional truth), "
-              f"weights [{float(ak.min(w)):.2f}, {float(ak.max(w)):.2f}]")
+        for L in det["calo_link"]:
+            if L not in stored:
+                continue
+            w = t[f"{L}/{L}.weight"].array(entry_stop=3)
+            fro = np.asarray(ak.flatten(t[f"_{L}_from/_{L}_from.index"].array(entry_stop=1)))
+            u, c = np.unique(fro, return_counts=True)
+            print(f"  [OK ] {L}: {sum(len(x) for x in w)} links (3 ev), "
+                  f"{100*(c>1).mean():.1f}% multi-link hits (fractional truth), "
+                  f"weights [{float(ak.min(w)):.2f}, {float(ak.max(w)):.2f}]")
 
     # ---- 5. stats ----
     nh = sum(len(x) for x in t[f"{det['trk_digi'][0]}/{det['trk_digi'][0]}.cellID"].array(entry_stop=5))

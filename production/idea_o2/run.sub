@@ -1,0 +1,22 @@
+# HTCondor submit for IDEA o2 production (lxplus). See README.md.
+# 1) stage: cp -r cards cfg pythia.py gen_sim_digireco.sh <STAGING_DIR on EOS>
+# 2) edit environment below (incl. K4H_NIGHTLY -- pin a current nightlies date!)
+# 3) mkdir -p logs/out logs/err ; condor_submit run.sub
+# 4) audit: python ../../validation/audit_edm4hep.py --detector idea_o2 <OUTPUT_DIR>/*.root
+executable = gen_sim_digireco.sh
+arguments  = "$(Cluster).$(Process) $(n_events)"
+environment = "STAGING_DIR=/eos/user/f/fmokhtar/fcc-mlpf/production/idea_o2 OUTPUT_DIR=/eos/user/f/fmokhtar/fcc-mlpf/data/idea_o2_zqq K4H_NIGHTLY=2026-10-04"
+log    = logs/$(Cluster).log
+output = logs/out/$(Cluster).$(Process).log
+error  = logs/err/$(Cluster).$(Process).log
++AccountingGroup = "group_u_FCC.local_gen"
+MY.WantOS = "el9"
+# MEASURED (2026-10-05): full sim with calo ~19 min/event. Budget jobs accordingly:
+#   2 ev/job -> ~45 min  (longlunch OK, smoke)   |   5 ev/job -> ~2h (workday to be safe)
++JobFlavour = "longlunch"
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+transfer_input_files    = ""
+transfer_output_files   = ""
+n_events = 2
+queue 2
