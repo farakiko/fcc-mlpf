@@ -112,3 +112,36 @@ def build_cache(parquets, cache, pt_cut=0.1, min_hits=3):
         torch.save(evs, cache)
         print(f"wrote {cache} ({len(evs)} events)", flush=True)
     return evs
+
+
+# -------------------------------------------------------- shard streaming (large corpora)
+def build_shards(parquets, shard_dir, pt_cut=0.1, min_hits=3):
+    """One featurized .pt shard per parquet (resumable; skip-if-exists). Returns
+    (shard_paths, meta) with meta = {n_events, kmax, detectors}. For corpora that don't
+    fit in memory: the training loop loads one shard at a time."""
+    import json
+    os.makedirs(shard_dir, exist_ok=True)
+    paths, meta = [], {"n_events": 0, "kmax": 0, "detectors": set()}
+    for p in parquets:
+        key = os.path.splitext(os.path.basename(p))[0]
+        sp = os.path.join(shard_dir, key + ".pt")
+        mp = os.path.join(shard_dir, key + ".json")
+        if not (os.path.exists(sp) and os.path.exists(mp)):
+            evs = load_parquet(p, pt_cut=pt_cut, min_hits=min_hits)
+            torch.save(evs, sp + ".tmp")
+            os.replace(sp + ".tmp", sp)
+            with open(mp, "w") as f:
+                json.dump({"n": len(evs), "kmax": max((e["K"] for e in evs), default=0),
+                           "detectors": sorted(set(e["detector"] for e in evs))}, f)
+            print(f"  shard {key}: {len(evs)} events", flush=True)
+        m = json.load(open(mp))
+        paths.append(sp)
+        meta["n_events"] += m["n"]
+        meta["kmax"] = max(meta["kmax"], m["kmax"])
+        meta["detectors"].update(m["detectors"])
+    meta["detectors"] = sorted(meta["detectors"])
+    return paths, meta
+
+
+def load_shard(path):
+    return torch.load(path, weights_only=False)

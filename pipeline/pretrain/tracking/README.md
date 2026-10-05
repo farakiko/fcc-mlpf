@@ -6,10 +6,26 @@ from `postprocessing/` — one file or a mix of detectors in the same run:
 ```bash
 # stability check (3 epochs, finiteness asserts, per-detector eval; no checkpoints)
 python train.py --inputs cld.parquet idea.parquet --check
-# real training
+# small in-memory run
 python train.py --inputs cld1.parquet cld2.parquet idea1.parquet \
     --epochs 150 --cache cache_mixed.pt --outdir runs/t_mixed
+# large corpus: streaming shards, held-out-first-N split (= the dataset's "first 10%" val
+# convention), per-epoch val loss, metrics/checkpoints mirrored (e.g. to EOS)
+python train.py --inputs '<derived>/cld_ttbar/chunk_*.parquet' --test-first 45 \
+    --shard-cache /fast/local/shards_cld --epochs 20 \
+    --outdir runs/t_cld90k --mirror /eos/user/<u>/fcc-mlpf/runs/t_cld90k
+# resume after an interruption (same command +):  --resume runs/t_cld90k/last.pt
+# after training: held-out comparison vs the classical baseline
+python eval.py --ckpt runs/t_cld90k/best.pt --shard-cache /fast/local/shards_cld \
+    --inputs '<derived>/cld_ttbar/chunk_000[0-3]*.parquet' --outdir runs/t_cld90k
 ```
+
+Monitoring: `--outdir` (and its `--mirror` copy) holds `metrics.jsonl` (per-epoch train/val
+loss + DM numbers), `loss_curve.pdf` (refreshed every epoch), `best.pt` (highest held-out DM
+efficiency), `last.pt` (resume point). `eval.py` adds `eval_tracking.pdf` + `summary.txt`:
+DM efficiency vs truth pT, fake fraction vs fitted pT, and tier-1 fitted-pT resolution —
+model and classical baseline side by side. The shard cache (one featurized `.pt` per parquet,
+skip-if-exists) belongs on fast local disk, not EOS.
 
 Run from this directory. `data.py` = parquet → features/labels (truth selection: charged, pT>0.1, ≥3 hits; override
 with `--pt-cut/--min-hits`). `model.py` = TrackFormer (encoder `--attn full|lsh` + slot

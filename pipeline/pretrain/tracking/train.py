@@ -7,11 +7,20 @@ baseline finder's DM where the parquet carries one (CLD conformal tracking).
 
 Stability check (no real training):
   python train.py --inputs cld.parquet idea.parquet --check
-Full run:
+Small in-memory run:
   python train.py --inputs ... --epochs 150 --outdir runs/t_mixed
+Large corpus (streaming shards; --inputs takes globs; split convention: the FIRST
+--test-first files of the sorted list are held out -- matches the dataset's "first 10%"
+val convention; test tracks the val loss, no third split for now):
+  python train.py --inputs '<derived>/cld_ttbar/chunk_*.parquet' --test-first 45 \
+      --shard-cache /fast/disk/shards_cld --epochs 20 \
+      --outdir runs/t_cld90k --mirror /eos/user/.../runs/t_cld90k
 """
 import argparse
+import glob as globlib
+import json
 import os
+import shutil
 import sys
 import time
 
@@ -21,7 +30,7 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from data import build_cache
+from data import build_cache, build_shards, load_shard
 from model import TrackFormer
 
 W_CLS, W_ASSIGN, W_DICE, W_BG, W_NCE = 0.1, 200.0, 2.0, 1.8, 12.0
@@ -153,10 +162,58 @@ def evaluate(model, evs, dev, thr=0.5, fit_pt=False):
     return (out, res) if fit_pt else out
 
 
+def _loss_curve(metrics_path, out_pdf):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    rows = [json.loads(l) for l in open(metrics_path)]
+    if not rows:
+        return
+    ep = [r["ep"] for r in rows]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    axes[0].plot(ep, [r["loss"] for r in rows], label="train")
+    axes[0].plot(ep, [r["val_loss"] for r in rows], label="test (tracks val)")
+    axes[0].set_xlabel("epoch"); axes[0].set_ylabel("loss"); axes[0].set_yscale("log")
+    axes[0].legend(); axes[0].grid(alpha=0.3)
+    dets = sorted({d for r in rows for d in r.get("dm", {})})
+    for d in dets:
+        e_ = [r["ep"] for r in rows if d in r.get("dm", {})]
+        axes[1].plot(e_, [r["dm"][d][0] for r in rows if d in r.get("dm", {})], "o-", label=f"{d} eff")
+        axes[1].plot(e_, [r["dm"][d][1] for r in rows if d in r.get("dm", {})], "s--", label=f"{d} fake")
+        if rows[-1].get("dm", {}).get(d, [None, None, None])[2] is not None:
+            axes[1].axhline(rows[-1]["dm"][d][2], color="gray", ls=":", lw=1)
+    axes[1].set_xlabel("epoch"); axes[1].set_ylabel("DM eff / fake (dotted: baseline eff)")
+    axes[1].set_ylim(0, 1)
+    if dets:
+        axes[1].legend(fontsize=8)
+    axes[1].grid(alpha=0.3)
+    fig.tight_layout(); fig.savefig(out_pdf); plt.close(fig)
+
+
+def _mirror(outdir, mirror):
+    if not mirror:
+        return
+    os.makedirs(mirror, exist_ok=True)
+    for f in ("metrics.jsonl", "loss_curve.pdf", "best.pt", "last.pt"):
+        p = os.path.join(outdir, f)
+        if os.path.exists(p):
+            try:
+                shutil.copy2(p, os.path.join(mirror, f))
+            except OSError as e:
+                print(f"  [mirror] {f}: {e}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--inputs", nargs="+", required=True, help="canonical parquet file(s), any mix of detectors")
-    ap.add_argument("--cache", default="", help="optional .pt cache path")
+    ap.add_argument("--inputs", nargs="+", required=True,
+                    help="canonical parquet file(s) or glob(s), any mix of detectors")
+    ap.add_argument("--test-first", type=int, default=0,
+                    help="hold out the FIRST N files of the sorted input list (dataset val "
+                         "convention); they provide val-loss tracking + in-training DM eval")
+    ap.add_argument("--shard-cache", default="",
+                    help="dir for per-file featurized shards; enables streaming (one shard "
+                         "in memory at a time) -- use a fast local disk, not EOS")
+    ap.add_argument("--cache", default="", help="optional .pt cache path (in-memory mode)")
     ap.add_argument("--pt-cut", type=float, default=0.1)
     ap.add_argument("--min-hits", type=int, default=3)
     ap.add_argument("--attn", default="full", choices=["full", "lsh"])
@@ -165,9 +222,18 @@ def main():
     ap.add_argument("--block", type=int, default=128)
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--lr", type=float, default=2.5e-4)
-    ap.add_argument("--val-frac", type=float, default=0.1)
-    ap.add_argument("--eval-every", type=int, default=10)
+    ap.add_argument("--val-frac", type=float, default=0.1,
+                    help="random split fraction when --test-first is not used")
+    ap.add_argument("--val-events", type=int, default=512,
+                    help="test events kept resident for the per-epoch val loss")
+    ap.add_argument("--eval-events", type=int, default=1024,
+                    help="test events for the periodic DM eval (full eval -> eval.py)")
+    ap.add_argument("--eval-every", type=int, default=1)
     ap.add_argument("--outdir", default="runs/t_dev")
+    ap.add_argument("--mirror", default="",
+                    help="copy metrics.jsonl/loss_curve.pdf/checkpoints here after each eval "
+                         "(e.g. an EOS path for monitoring)")
+    ap.add_argument("--resume", default="", help="last.pt to resume from (model+opt+epoch)")
     ap.add_argument("--check", action="store_true",
                     help="stability check: 3 epochs, finiteness asserts, per-detector eval, no checkpoints")
     args = ap.parse_args()
@@ -177,52 +243,111 @@ def main():
 
     dev = torch.device("cuda" if torch.cuda.is_available() else
                        "mps" if torch.backends.mps.is_available() else "cpu")
-    evs = build_cache(args.inputs, args.cache, pt_cut=args.pt_cut, min_hits=args.min_hits)
+    files = sorted(sum([globlib.glob(p) if any(c in p for c in "*?[") else [p]
+                        for p in args.inputs], []))
+    assert files, f"no inputs match {args.inputs}"
     rng = np.random.default_rng(0)
-    idx = rng.permutation(len(evs))
-    nval = max(1, int(len(evs) * args.val_frac))
-    val = [evs[i] for i in idx[:nval]]; trn = [evs[i] for i in idx[nval:]]
-    kmax = max(e["K"] for e in evs)
-    dets = sorted(set(e["detector"] for e in evs))
-    print(f"{len(trn)} train / {len(val)} val | detectors {dets} | max K {kmax} "
-          f"(slots {args.slots}) | device {dev}", flush=True)
+
+    if args.shard_cache:  # ---- streaming mode
+        test_files, train_files = files[:args.test_first], files[args.test_first:]
+        assert test_files, "--shard-cache requires --test-first > 0"
+        print(f"{len(train_files)} train files / {len(test_files)} test files; building shards...", flush=True)
+        trn_shards, trn_meta = build_shards(train_files, args.shard_cache,
+                                            pt_cut=args.pt_cut, min_hits=args.min_hits)
+        tst_shards, tst_meta = build_shards(test_files, args.shard_cache,
+                                            pt_cut=args.pt_cut, min_hits=args.min_hits)
+        # resident test subsets: val loss (every epoch) + DM eval (every eval-every)
+        tst = []
+        for sp in tst_shards:
+            tst += load_shard(sp)
+            if len(tst) >= max(args.val_events, args.eval_events):
+                break
+        ridx = rng.permutation(len(tst))
+        val_sub = [tst[i] for i in ridx[:args.val_events]]
+        eval_sub = [tst[i] for i in ridx[:args.eval_events]]
+        del tst
+        n_train = trn_meta["n_events"]
+        kmax = max(trn_meta["kmax"], tst_meta["kmax"])
+        dets = sorted(set(trn_meta["detectors"]) | set(tst_meta["detectors"]))
+    else:  # ---- in-memory mode (small corpora, --check)
+        evs = build_cache(files, args.cache, pt_cut=args.pt_cut, min_hits=args.min_hits)
+        if args.test_first:
+            # file-order split is not available in-memory (events are concatenated), so
+            # approximate: first test_first/len(files) fraction of events
+            nval = max(1, int(len(evs) * args.test_first / len(files)))
+            val_sub = evs[:nval]; trn_evs = evs[nval:]
+        else:
+            idx = rng.permutation(len(evs))
+            nval = max(1, int(len(evs) * args.val_frac))
+            val_sub = [evs[i] for i in idx[:nval]]; trn_evs = [evs[i] for i in idx[nval:]]
+        eval_sub = val_sub
+        trn_shards, n_train = [trn_evs], len(trn_evs)
+        kmax = max(e["K"] for e in evs)
+        dets = sorted(set(e["detector"] for e in evs))
+
+    print(f"{n_train} train / {len(val_sub)} val-loss / {len(eval_sub)} eval events | "
+          f"detectors {dets} | max K {kmax} (slots {args.slots}) | device {dev}", flush=True)
     assert args.slots > kmax, "need more slots than max tracks/event"
 
     model = TrackFormer(d=args.dim, slots=args.slots, attn=args.attn, block=args.block).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs * len(trn), 1))
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs * n_train, 1))
+    start_ep, best = 0, 0.0
+    if args.resume:
+        ck = torch.load(args.resume, map_location=dev, weights_only=False)
+        model.load_state_dict(ck["state_dict"]); opt.load_state_dict(ck["opt"])
+        start_ep, best = ck["ep"] + 1, ck.get("best", 0.0)
+        for _ in range(start_ep * n_train):
+            sched.step()
+        print(f"resumed from {args.resume} at epoch {start_ep}", flush=True)
 
-    best = 0.0
-    for ep in range(args.epochs):
-        model.train(); t0 = time.time(); tot = 0.0
-        for i in rng.permutation(len(trn)):
-            loss = event_loss(model, trn[i], dev)
-            if args.check:
-                assert torch.isfinite(loss), f"non-finite loss at ep{ep}"
-            opt.zero_grad(); loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step(); sched.step()
-            tot += loss.item()
-        tot /= max(len(trn), 1)
-        line = f"ep {ep:3d}  loss {tot:9.3f}  [{time.time()-t0:.0f}s]"
+    metrics_path = os.path.join(args.outdir, "metrics.jsonl")
+    for ep in range(start_ep, args.epochs):
+        model.train(); t0 = time.time(); tot = nev = 0
+        for sj in rng.permutation(len(trn_shards)):
+            shard = trn_shards[sj] if not args.shard_cache else load_shard(trn_shards[sj])
+            for i in rng.permutation(len(shard)):
+                loss = event_loss(model, shard[i], dev)
+                if args.check:
+                    assert torch.isfinite(loss), f"non-finite loss at ep{ep}"
+                opt.zero_grad(); loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                opt.step(); sched.step()
+                tot += loss.item(); nev += 1
+        tot /= max(nev, 1)
+
+        model.eval()
+        with torch.no_grad():
+            vloss = float(np.mean([event_loss(model, e, dev).item() for e in val_sub]))
+        line = f"ep {ep:3d}  loss {tot:9.3f}  val {vloss:9.3f}  [{time.time()-t0:.0f}s]"
+        rec = dict(ep=ep, loss=tot, val_loss=vloss, sec=round(time.time() - t0, 1))
         if (ep + 1) % args.eval_every == 0 or ep == args.epochs - 1:
-            model.eval()
-            res = evaluate(model, val, dev)
+            res = evaluate(model, eval_sub, dev)
+            rec["dm"] = {d: [round(v, 4) if v is not None else None for v in r[:4]]
+                         for d, r in res.items()}
             for d, (me, mf, be, bf, n) in sorted(res.items()):
                 line += f"  | {d}: DM {me:.3f}/{mf:.3f}"
                 if be is not None:
                     line += f" (base {be:.3f}/{bf:.3f})"
                 line += f" [{n} trk]"
             eff = np.mean([r[0] for r in res.values()])
-            if eff > best and not args.check:
+            if eff >= best and not args.check:
                 best = eff
                 torch.save(dict(state_dict=model.state_dict(), args=vars(args)),
                            os.path.join(args.outdir, "best.pt"))
+        with open(metrics_path, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+        if not args.check:
+            torch.save(dict(state_dict=model.state_dict(), opt=opt.state_dict(),
+                            ep=ep, best=best, args=vars(args)),
+                       os.path.join(args.outdir, "last.pt"))
+            _loss_curve(metrics_path, os.path.join(args.outdir, "loss_curve.pdf"))
+            _mirror(args.outdir, args.mirror)
         print(line, flush=True)
     # final pass with the tier-1 helix fit on matched found tracks: fitted-pT resolution
     model.eval()
-    _, fres = evaluate(model, val, dev, fit_pt=True)
+    _, fres = evaluate(model, eval_sub, dev, fit_pt=True)
     for d, rr in sorted(fres.items()):
         rr = np.array(rr)
         q = np.percentile(rr, [25, 50, 75])
