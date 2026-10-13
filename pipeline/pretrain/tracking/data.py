@@ -123,7 +123,10 @@ def build_shards(parquets, shard_dir, pt_cut=0.1, min_hits=3):
     os.makedirs(shard_dir, exist_ok=True)
     paths, meta = [], {"n_events": 0, "kmax": 0, "detectors": set()}
     for p in parquets:
-        key = os.path.splitext(os.path.basename(p))[0]
+        # key includes the dataset dir: different detectors share chunk basenames
+        # (cld_ttbar/chunk_00000.parquet vs idea_o1_zqq/chunk_00000.parquet)
+        key = (os.path.basename(os.path.dirname(os.path.abspath(p))) + "_"
+               + os.path.splitext(os.path.basename(p))[0])
         sp = os.path.join(shard_dir, key + ".pt")
         mp = os.path.join(shard_dir, key + ".json")
         if not (os.path.exists(sp) and os.path.exists(mp)):

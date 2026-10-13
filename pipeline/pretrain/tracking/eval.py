@@ -151,14 +151,14 @@ def main():
     import matplotlib.pyplot as plt
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
     ok = gt_tot > 20
-    axes[0].plot(CTR[ok], (gt_m / np.maximum(gt_tot, 1))[ok], "o-", label="model")
+    axes[0].plot(CTR[ok], (gt_m / np.maximum(gt_tot, 1))[ok], "o-", label="HEPTv2")
     axes[0].plot(CTR[ok], (gt_b / np.maximum(gt_tot, 1))[ok], "s--", label="conformal")
     axes[0].set_ylabel("DM efficiency"); axes[0].set_ylim(0, 1.05)
     okm = rec_m > 20; okb = rec_b > 20
-    axes[1].plot(CTR[okm], (fk_m / np.maximum(rec_m, 1))[okm], "o-", label="model")
+    axes[1].plot(CTR[okm], (fk_m / np.maximum(rec_m, 1))[okm], "o-", label="HEPTv2")
     axes[1].plot(CTR[okb], (fk_b / np.maximum(rec_b, 1))[okb], "s--", label="conformal")
     axes[1].set_ylabel("fake fraction (vs fitted $p_T$)"); axes[1].set_yscale("log")
-    axes[2].plot(CTR, [100 * iqr(r) for r in res_m], "o-", label="model")
+    axes[2].plot(CTR, [100 * iqr(r) for r in res_m], "o-", label="HEPTv2")
     axes[2].plot(CTR, [100 * iqr(r) for r in res_b], "s--", label="conformal")
     axes[2].set_ylabel("tier-1 fitted-$p_T$ resolution [%]"); axes[2].set_yscale("log")
     for ax in axes:

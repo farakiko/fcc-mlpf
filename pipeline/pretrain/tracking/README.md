@@ -1,7 +1,22 @@
 # pretrain/tracking — stage [T] (slot-decoder track finding)
 
 Trains the HEPTv2-style slot-decoder track finder **detector-blind** on canonical parquet
-from `postprocessing/` — one file or a mix of detectors in the same run:
+from `postprocessing/` — one file or a mix of detectors in the same run.
+
+## Environment
+
+Plain python (no key4hep needed for training — the parquets are self-contained):
+
+```bash
+pip install torch numpy pyarrow scipy matplotlib     # python >= 3.10
+# uproot is additionally needed only for the fit-validation scripts (validate_fit.py etc.)
+```
+
+A single modern GPU is enough (the model is ~1.4M params; one event per step). On events
+with several thousand hits (IDEA drift chamber), full attention is the default and fine on
+CUDA; `--attn lsh` is the fallback if memory or step time becomes a problem.
+
+## Training
 
 ```bash
 # stability check (3 epochs, finiteness asserts, per-detector eval; no checkpoints)
@@ -19,6 +34,20 @@ python train.py --inputs '<derived>/cld_ttbar/chunk_*.parquet' --test-first 45 \
 python eval.py --ckpt runs/t_cld90k/best.pt --shard-cache /fast/local/shards_cld \
     --inputs '<derived>/cld_ttbar/chunk_000[0-3]*.parquet' --outdir runs/t_cld90k
 ```
+
+IDEA example (150 chunks x 500 events; 1 chunk = 1 source digi file; same convention —
+first 10% of the sorted chunk list is the held-out split):
+
+```bash
+python train.py --inputs '<derived>/idea_o1_zqq/chunk_*.parquet' --test-first 15 \
+    --shard-cache /fast/local/shards_idea --epochs 20 \
+    --outdir runs/t_idea75k --mirror <somewhere persistent>
+```
+
+Notes for IDEA: events are ~3.6k hits (vs ~900 for CLD) so epochs are slower; there is no
+classical-baseline column in the DM eval (the IDEA digi files carry no baseline tracks);
+`--slots` must exceed the max tracks/event in the corpus — the startup line prints `max K`,
+and training asserts if the default (160) is too small.
 
 Monitoring: `--outdir` (and its `--mirror` copy) holds `metrics.jsonl` (per-epoch train/val
 loss + DM numbers), `loss_curve.pdf` (refreshed every epoch), `best.pt` (highest held-out DM
@@ -104,8 +133,34 @@ measured motivation for outlier down-weighting (DAF-like / learned soft assignme
 - **Charge sign flips on 0.41 %** of tracks (median pT 0.34 GeV — loopers, where the
   inner→outer hit-flow heuristic for rotation sense fails).
 
-Tier 2 (Genfit2 DAF via k4RecTracker, IDEA) stays the production-grade reference; tier 3
-(calo-face state) is the same helix extrapolated.
+The pipeline's PRODUCTION fitter is Genfit (DAF) via k4RecTracker — see `genfit/README.md`:
+a batch `k4run` pass that refits the finder's tracks with material effects from DD4hep
+(commissioned on CLD campaign files 2026-10-06). The helix fit here remains the in-loop /
+dev instrument; the calo-face state is the same helix extrapolated.
+
+### Tier 1b — learned calibration head (`tier1b.py`, v0 2026-10-06)
+
+Small MLP (15 → 64 → 64 → 11) on top of tier 1. Inputs: the 5 fitted params + their 5
+sigmas + hit-set descriptors (n hits, inner/outer radius, |eta|, log pT). Outputs: 5 value
+shifts (in tier-1 sigma units), 5 log sigma-scale factors, and an outlier probability pi.
+**Labels: only the 5 true parameters from MC** — there is no sigma label; the two-component
+Gaussian-mixture NLL forces sigma to the empirical core residual width per conditioning cell
+(proper scoring rule), while pi absorbs the kinked-track population (hadronic interactions:
+residuals at O(100) core sigmas — a single-Gaussian or Huber NLL provably mis-calibrates
+on them; both tried, both rejected on held-out pulls).
+
+v0 result (20k truth-hit-set tracks from 48 CLD REC files, held-out-by-file validation),
+d0 pull width (want 1.0): **149 → 2.0** (0.2–0.5 GeV), **37 → 1.03** (0.5–1), **15 → 0.90**
+(1–2). In the multiple-scattering regime (< 5 GeV) all five parameters land at 0.6–1.4.
+Above 5 GeV v0 is conservative (pulls 0.2–0.9, i.e. sigma up to ~4x too large) — the
+sparse high-pT corner needs statistics, not reweighting (pT-balanced loss weights were
+tried and degraded calibration globally); fix = build the dataset from the canonical
+parquet corpus (millions of truth tracks) instead of 48 local files.
+
+```bash
+python tier1b.py --data-dir <dir with *.edm4hep.root> --nfiles 48 --epochs 600
+# -> tier1b.pt + plots/trk_fit/tier1b_validation.pdf (pull widths before/after vs pT)
+```
 
 ```bash
 # rerun the validation (needs REC ROOT files, not parquet — it compares vs stored KF states)

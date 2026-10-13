@@ -210,6 +210,11 @@ def main():
     ap.add_argument("--test-first", type=int, default=0,
                     help="hold out the FIRST N files of the sorted input list (dataset val "
                          "convention); they provide val-loss tracking + in-training DM eval")
+    ap.add_argument("--test-frac", type=float, default=0.0,
+                    help="mixed-detector alternative to --test-first: hold out the first "
+                         "FRACTION of each --inputs glob SEPARATELY (a global --test-first "
+                         "on the sorted union would hold out only the alphabetically first "
+                         "dataset)")
     ap.add_argument("--shard-cache", default="",
                     help="dir for per-file featurized shards; enables streaming (one shard "
                          "in memory at a time) -- use a fast local disk, not EOS")
@@ -243,14 +248,23 @@ def main():
 
     dev = torch.device("cuda" if torch.cuda.is_available() else
                        "mps" if torch.backends.mps.is_available() else "cpu")
-    files = sorted(sum([globlib.glob(p) if any(c in p for c in "*?[") else [p]
-                        for p in args.inputs], []))
+    groups = [sorted(globlib.glob(p)) if any(c in p for c in "*?[") else [p]
+              for p in args.inputs]
+    files = sum(groups, [])
     assert files, f"no inputs match {args.inputs}"
     rng = np.random.default_rng(0)
 
     if args.shard_cache:  # ---- streaming mode
-        test_files, train_files = files[:args.test_first], files[args.test_first:]
-        assert test_files, "--shard-cache requires --test-first > 0"
+        if args.test_frac:
+            import math
+            test_files, train_files = [], []
+            for g in groups:
+                n = math.ceil(len(g) * args.test_frac)
+                test_files += g[:n]; train_files += g[n:]
+        else:
+            files = sorted(files)
+            test_files, train_files = files[:args.test_first], files[args.test_first:]
+        assert test_files, "--shard-cache requires --test-first or --test-frac > 0"
         print(f"{len(train_files)} train files / {len(test_files)} test files; building shards...", flush=True)
         trn_shards, trn_meta = build_shards(train_files, args.shard_cache,
                                             pt_cut=args.pt_cut, min_hits=args.min_hits)
