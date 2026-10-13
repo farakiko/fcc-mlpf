@@ -1,178 +1,141 @@
-# pretrain/tracking — stage [T] (slot-decoder track finding)
+# pretrain/tracking — stage [T]: ML track finding
 
-Trains the HEPTv2-style slot-decoder track finder **detector-blind** on canonical parquet
-from `postprocessing/` — one file or a mix of detectors in the same run.
+This directory trains and evaluates the track-finding stage: a transformer encoder with a
+slot decoder (following HEPTv2, arXiv:2606.20437; 1.4M parameters) that assigns tracker hits
+to track candidates. The model is detector-blind: it consumes canonical parquet files
+produced by `postprocessing/` and can be trained on one detector or on several detectors
+jointly in the same run. Track candidates are subsequently fitted by Genfit2 (see
+`genfit/README.md`); the fitted parameters, not the raw candidates, are what enters the [PF]
+stage.
 
 ## Environment
 
-Plain python (no key4hep needed for training — the parquets are self-contained):
+Training requires plain Python (no key4hep):
 
 ```bash
-pip install torch numpy pyarrow scipy matplotlib     # python >= 3.10
-# uproot is additionally needed only for the fit-validation scripts (validate_fit.py etc.)
+pip install torch numpy pyarrow scipy matplotlib        # python >= 3.10
 ```
 
-A single modern GPU is enough (the model is ~1.4M params; one event per step). On events
-with several thousand hits (IDEA drift chamber), full attention is the default and fine on
-CUDA; `--attn lsh` is the fallback if memory or step time becomes a problem.
+A single modern GPU suffices. Events with several thousand hits (IDEA drift chamber) run
+with full attention by default; `--attn lsh` is the fallback if memory or step time becomes
+limiting. The Genfit fitting chain additionally requires a key4hep environment (see
+`genfit/README.md`).
+
+## Data and splits
+
+Inputs are canonical parquet chunks (one chunk ≈ 200 CLD or 500 IDEA events). The held-out
+test convention is the first 10% of each dataset's sorted chunk list:
+
+- single dataset: `--test-first N` (N = number of held-out leading files);
+- mixed datasets: `--test-frac 0.1`, which holds out the leading fraction of **each** input
+  glob separately. (A global `--test-first` on the sorted union would hold out only the
+  alphabetically first dataset.)
+
+No third split is kept at this stage; the held-out set provides both the per-epoch validation
+signal and the final test numbers.
 
 ## Training
 
 ```bash
-# stability check (3 epochs, finiteness asserts, per-detector eval; no checkpoints)
+# stability check (3 epochs, finiteness asserts; no checkpoints)
 python train.py --inputs cld.parquet idea.parquet --check
-# small in-memory run
-python train.py --inputs cld1.parquet cld2.parquet idea1.parquet \
-    --epochs 150 --cache cache_mixed.pt --outdir runs/t_mixed
-# large corpus: streaming shards, held-out-first-N split (= the dataset's "first 10%" val
-# convention), per-epoch val loss, metrics/checkpoints mirrored (e.g. to EOS)
+
+# single-detector training (CLD)
 python train.py --inputs '<derived>/cld_ttbar/chunk_*.parquet' --test-first 45 \
-    --shard-cache /fast/local/shards_cld --epochs 20 \
-    --outdir runs/t_cld90k --mirror /eos/user/<u>/fcc-mlpf/runs/t_cld90k
-# resume after an interruption (same command +):  --resume runs/t_cld90k/last.pt
-# after training: held-out comparison vs the classical baseline
-python eval.py --ckpt runs/t_cld90k/best.pt --shard-cache /fast/local/shards_cld \
-    --inputs '<derived>/cld_ttbar/chunk_000[0-3]*.parquet' --outdir runs/t_cld90k
+    --slots 200 --lr 1e-4 --epochs 20 \
+    --shard-cache /fast/local/shards --outdir runs/t_cld --mirror <persistent dir>
+
+# mixed-detector training (CLD + IDEA)
+python train.py \
+    --inputs '<derived>/cld_ttbar/chunk_*.parquet' '<derived>/idea_o1_zqq/chunk_000[0-4]*.parquet' \
+    --test-frac 0.1 --slots 200 --lr 1e-4 --epochs 20 \
+    --shard-cache /fast/local/shards --outdir runs/t_mixed --mirror <persistent dir>
+
+# resume after an interruption: same command + --resume runs/<run>/last.pt
 ```
 
-IDEA example (150 chunks x 500 events; 1 chunk = 1 source digi file; same convention —
-first 10% of the sorted chunk list is the held-out split):
+Each parquet file is featurized once into a `.pt` shard (skip-if-exists; shard keys are
+prefixed with the dataset directory, since chunk basenames repeat across datasets) and the
+training loop streams one shard at a time in a freshly shuffled order each epoch, so CLD and
+IDEA events are interleaved in random blocks. `--slots` must exceed the maximum number of
+true tracks per event in the corpus; the startup line prints `max K`, and training stops with
+an assertion if the default is too small (the CLD tt̄ corpus requires `--slots 200`).
 
-```bash
-python train.py --inputs '<derived>/idea_o1_zqq/chunk_*.parquet' --test-first 15 \
-    --shard-cache /fast/local/shards_idea --epochs 20 \
-    --outdir runs/t_idea75k --mirror <somewhere persistent>
-```
+Monitoring: `metrics.jsonl` records, per epoch, the training loss, the validation loss
+overall and per detector (`val_loss_det`), and double-majority efficiency/fake rate per
+detector on a fixed validation subsample (drawn from a shuffled shard order, so all datasets
+are represented); `loss_curve.pdf` is refreshed every epoch; `best.pt` holds the
+highest-efficiency checkpoint and `last.pt` the resume point. `--mirror <dir>` copies these
+artifacts after every epoch.
 
-Notes for IDEA: events are ~3.6k hits (vs ~900 for CLD) so epochs are slower; there is no
-classical-baseline column in the DM eval (the IDEA digi files carry no baseline tracks);
-`--slots` must exceed the max tracks/event in the corpus — the startup line prints `max K`,
-and training asserts if the default (160) is too small.
+## The input feature vector
 
-Monitoring: `--outdir` (and its `--mirror` copy) holds `metrics.jsonl` (per-epoch train/val
-loss + DM numbers), `loss_curve.pdf` (refreshed every epoch), `best.pt` (highest held-out DM
-efficiency), `last.pt` (resume point). `eval.py` adds `eval_tracking.pdf` + `summary.txt`:
-DM efficiency vs truth pT, fake fraction vs fitted pT, and tier-1 fitted-pT resolution —
-model and classical baseline side by side. The shard cache (one featurized `.pt` per parquet,
-skip-if-exists) belongs on fast local disk, not EOS.
+One fixed-length vector per hit (`data.py::featurize`, F = 34). The same position can carry
+different physics for different hit types; this table is the authoritative map. Scaling
+constants put typical values at O(0.1–1). Origin legend: `std` = community practice since
+TrackML (the HEPTv2 paper itself runs on little more than coordinates); `ADV` = inherited
+from A. De Vita's GGTF drift-chamber chain; `ours` = our enrichment of his converter;
+`ours*` = the cross-detector schema design introduced here (union layout, detector-global
+roles, modality gating, no detector token). Input features are digitized measurements and
+detector geometry only; truth enters exclusively as training labels (audited 2026-10-13,
+including the left/right candidate ordering, which is purely geometric).
 
-Run from this directory. `data.py` = parquet → features/labels (truth selection: charged, pT>0.1, ≥3 hits; override
-with `--pt-cut/--min-hits`). `model.py` = TrackFormer (encoder `--attn full|lsh` + slot
-decoder). `train.py` = HEPTv2 losses (Hungarian focal+Dice+slot-BCE, hit-background BCE,
-InfoNCE) and double-majority eval (purity>0.5 ∧ eff>0.5, ≥3 hits) reported **per detector**,
-with the baseline finder's DM shown wherever the parquet carries one (CLD: conformal
-tracking). Ported from the development repo (mlpf/analysis/trk_*), 2026-10-01.
+| idx | feature | origin | CLD silicon | IDEA silicon (VTX/SiWr) | IDEA drift chamber | notes |
+|---:|---|---|---|---|---|---|
+| 0–2 | x, y, z ÷1000 | std (wire-point convention: ADV) | measured space point | measured space point | **wire reference point** (not the crossing point) | same slot, different meaning — read together with idx 24 |
+| 3 | r ÷1000 | std | derived from 0–2 | ″ | ″ (wire radius) | |
+| 4–6 | sinφ, cosφ, η÷3 | std | hit direction from origin | ″ | ″ (of the wire point) | |
+| 7 | log₁₀(eDep·10⁶)÷5 | std | silicon dE | silicon dE | gas dE | very different distributions per material — the role one-hot disambiguates |
+| 8–10 | du, dv, dw ×100 | **ours** (uncertainty-aware inputs) | du, dv, 0 | du, dv, 0 | 0, 0, 0 | silicon-only |
+| 11 | drift_err ×100 | **ours** (enrichment) | 0 | 0 | distance-to-wire error (~100 µm) | wire-only |
+| 12 | alongwire_err ÷100 | **ours** (enrichment) | 0 | 0 | position-along-wire error (~30 mm) | wire-only; 300:1 anisotropy vs idx 11 |
+| 13 | wire stereo angle | **ours** (enrichment) | 0 | 0 | ±0.25 rad | gated by modality (×idx 24) |
+| 14–15 | sin/cos wire azimuth | **ours** (enrichment) | 0, 0 | 0, 0 | wire direction | gated — ungated, cos(0)=1 leaked a constant into silicon hits (fixed 2026-10-01) |
+| 16 | drift distance ÷10 | ADV | 0 | 0 | the drift measurement | wire-only |
+| 17–22 | L, R candidates ÷1000 | ADV | 0 | 0 | engineered left/right crossing points | wire-only; deliberately redundant with (0–2, 13–16) |
+| 23 | nClusters ÷30 | ADV | 0 | 0 | dN/dx cluster count | wire-only, PID-bearing |
+| 24 | modality | ADV (generalized) | 0 | 0 | 1 | the hit-type flag that governs how 0–23 are read |
+| 25–33 | role one-hot (9) | **ours*** | 0–5 (vtx/inner/outer × b/e) | 0,1 (vtx) + 7,8 (SiWr) | 6 | detector-global ids; vertex roles 0–1 deliberately shared CLD↔IDEA |
 
-## The input feature vector — exact per-detector semantics
+There is no explicit detector token: detector identity is implied by the modality flag and
+the role encoding, and the shared vertex roles are the designed location for cross-detector
+transfer. Per-feature distribution plots (CLD vs IDEA, publication style) are produced by
+`plot_features.py`.
 
-One fixed-length vector per hit (`data.py::featurize`, F = 34). **The same position can
-carry different physics for different hit types** — this table is the authoritative map.
-Scaling constants chosen to put typical values at O(0.1–1).
+## Evaluation
 
-| idx | feature | CLD silicon | IDEA silicon (VTX/SiWr) | IDEA drift chamber | ⚠ notes |
-|---:|---|---|---|---|---|
-| 0–2 | x, y, z ÷1000 | measured space point | measured space point | **wire reference point** (not the crossing point!) | ⚠ same slot, different meaning — the model must read it together with idx 24 |
-| 3 | r ÷1000 | derived from 0–2 | ″ | ″ (wire radius) | |
-| 4–6 | sinφ, cosφ, η÷3 | hit direction from origin | ″ | ″ (of the wire point) | |
-| 7 | log₁₀(eDep·10⁶)÷5 | silicon dE | silicon dE | **gas** dE | same definition, very different distributions per material — role one-hot (25–33) disambiguates |
-| 8–10 | du, dv, dw ×100 | du, dv, 0 (plane) | du, dv, 0 (plane) | 0, 0, 0 | silicon-only |
-| 11 | drift_err ×100 | 0 | 0 | distanceToWire error (~100 µm) | wire-only |
-| 12 | alongwire_err ÷100 | 0 | 0 | position-along-wire error (~30 mm!) | wire-only; the 300:1 anisotropy vs idx 11 |
-| 13 | wire stereo angle | 0 | 0 | ±0.25 rad | **gated by modality** (×idx 24) |
-| 14–15 | sin/cos wire azimuth | 0, 0 | 0, 0 | wire direction | gated — ungated, cos(0)=1 leaked a fake constant into silicon hits (fixed 2026-10-01) |
-| 16 | drift distance ÷10 | 0 | 0 | the measurement | wire-only |
-| 17–22 | L, R candidates ÷1000 | 0 | 0 | De Vita's engineered left/right points | wire-only; redundant with (0–2, 13–16) **by design** (union-features policy) |
-| 23 | nClusters ÷30 | 0 | 0 | dN/dx cluster count | wire-only, PID-bearing |
-| 24 | **modality** | 0 | 0 | **1** | the hit-type flag that governs how 0–23 must be read |
-| 25–33 | **role one-hot** (9) | 0–5 (vtx/inner/outer × b/e) | 0,1 (vtx) + 7,8 (SiWr) | 6 | detector-global ids — never reused across detectors |
+Finding-level (no fitting involved): `eval.py` scores a checkpoint on held-out chunks with
+the double-majority criterion (a truth particle is found if a track owns >50% of its hits
+and contains >50% of them; a track is fake if no particle majority-owns its hits), reporting
+efficiency and fake rate versus pT, with the classical baseline evaluated identically where
+the files carry one (CLD: conformal tracking). Binned arrays are saved to `eval_binned.npz`;
+`genfit/overlay_evals.py` overlays two trainings and the baseline on one figure.
 
-### How the model knows which detector a hit is from
+Fitted-level: the Genfit chain in `genfit/` fits the model's candidates and
+`genfit/fitted_chain_vs_baseline.py` compares resolutions, pulls and the d0-significance
+discrimination of up to two ML chains against the baseline tracking, judged by MC truth.
 
-There is **no explicit "this is CLD/IDEA" token** in v0 — deliberately. Identity is implied:
-- **modality** (idx 24) separates wire from silicon measurement semantics;
-- **role one-hot** (25–33) separates subdetectors, and because role ids are detector-global,
-  roles 2–5 occur only in CLD and 6–8 only in IDEA — the *shared* positions are roles 0–1
-  (vertex detectors), where the physics genuinely is analogous and sharing is the point.
+## Results (2026-10-13; details and figures in the talk material)
 
-This is the portability bet: condition on *physical/structural* properties, not on names, so
-a new detector's hits land in the right representation automatically. Planned extension
-(foundation plan): explicit physical conditioning scalars (B-field, material scales) appended
-when the corpus contains detectors where they differ — currently both are 2 T solenoids.
+Both trainings: 20 epochs, AdamW, lr 1e-4 with cosine decay, batch = one event, 200 slots.
+Held-out CLD test = 9,000 events / 588,933 charged particles (pT > 0.1 GeV, ≥3 hits);
+held-out IDEA test = 2,500 events / 62,020 particles.
 
-## Track fitting — tier 1 (`fit.py`, `validate_fit.py`)
+| | eff (CLD) | fake (CLD) | eff (IDEA) | fake (IDEA) |
+|---|---|---|---|---|
+| baseline tracking (conformal + Kalman) | 0.639 | 0.157 | — | — |
+| single-detector training (CLD only) | 0.766 | 0.064 | 0.0025 | 0.991 |
+| mixed-detector training (CLD + 22.5k IDEA ev) | 0.790 | 0.053 | 0.727 | 0.047 |
 
-`fit.py` is the **tier-1 fitter** of the three-tier design: an analytic, differentiable,
-weighted helix fit in torch — **not a neural network**. Kasa algebraic circle seed → 3
-Gauss–Newton iterations on the geometric residual (fixed count ⇒ differentiable) + weighted
-s–z line; covariance = (JᵀWJ)⁻¹ propagated to perigee parameters. Detector input: **B only**;
-hit uncertainties travel in the data (du/dv). Outputs follow edm4hep TrackState conventions:
-`d0, phi0, omega, z0, tanLambda` (+ diagonal σ's, pT, calo-face extrapolation via
-`extrapolate_to_r`). ~0.5 ms/track in a plain CPU python loop including the covariance
-jacobian — batching/vmap when the training loop needs it.
+The single-detector model does not transfer to the drift chamber (zero-shot collapse), while
+the jointly trained model covers both detectors with one set of weights and improves on the
+CLD-only model on CLD itself; the improvement persists at an equal number of optimizer
+updates. Known caveats: one seed per configuration, and a CLD-dominated track mix (≈90:10);
+the planned controls are a duplicate-data run and a fine-tuning scan on IDEA sample size.
 
-**Validated on CLD** (`validate_fit.py`, 48 REC files, 20.6k track pairs, 2026-10-05):
-against the conformal tracker's own Kalman fit (`SiTracks_Refitted` AtIP state) **on
-identical hit sets**:
+## Deprecated modules
 
-| parameter | median \|tier1 − KF\| | notes |
-|---|---|---|
-| d0 | 11 µm | corr +0.994 |
-| φ | 0.37 mrad | |
-| ω (curvature) | 0.04–0.3 % rel. for pT>1 GeV | **flat in pT up to 100 GeV** (−0.01% bias at 20–100) |
-| z0 | 36 µm | |
-| tanλ | 1.0×10⁻³ | |
-
-Truth closure (truth-assigned hit sets): pT resolution 0.5–0.6 % (1–20 GeV); degrades >20 GeV
-because truth hit sets contain post-interaction hits (kinks) a global fit can't reject — the
-measured motivation for outlier down-weighting (DAF-like / learned soft assignment).
-
-**Known tier-1 limitations, measured (= the tier-1b work order):**
-- **Covariance omits multiple scattering**: pulls are honest only where measurement error
-  dominates; σ(d0) is 12× too small at pT<1 GeV, 1.4× at pT>5 GeV. Tier 1b (a small
-  detector-conditioned residual/calibration head) owns this.
-- **Charge sign flips on 0.41 %** of tracks (median pT 0.34 GeV — loopers, where the
-  inner→outer hit-flow heuristic for rotation sense fails).
-
-The pipeline's PRODUCTION fitter is Genfit (DAF) via k4RecTracker — see `genfit/README.md`:
-a batch `k4run` pass that refits the finder's tracks with material effects from DD4hep
-(commissioned on CLD campaign files 2026-10-06). The helix fit here remains the in-loop /
-dev instrument; the calo-face state is the same helix extrapolated.
-
-### Tier 1b — learned calibration head (`tier1b.py`, v0 2026-10-06)
-
-Small MLP (15 → 64 → 64 → 11) on top of tier 1. Inputs: the 5 fitted params + their 5
-sigmas + hit-set descriptors (n hits, inner/outer radius, |eta|, log pT). Outputs: 5 value
-shifts (in tier-1 sigma units), 5 log sigma-scale factors, and an outlier probability pi.
-**Labels: only the 5 true parameters from MC** — there is no sigma label; the two-component
-Gaussian-mixture NLL forces sigma to the empirical core residual width per conditioning cell
-(proper scoring rule), while pi absorbs the kinked-track population (hadronic interactions:
-residuals at O(100) core sigmas — a single-Gaussian or Huber NLL provably mis-calibrates
-on them; both tried, both rejected on held-out pulls).
-
-v0 result (20k truth-hit-set tracks from 48 CLD REC files, held-out-by-file validation),
-d0 pull width (want 1.0): **149 → 2.0** (0.2–0.5 GeV), **37 → 1.03** (0.5–1), **15 → 0.90**
-(1–2). In the multiple-scattering regime (< 5 GeV) all five parameters land at 0.6–1.4.
-Above 5 GeV v0 is conservative (pulls 0.2–0.9, i.e. sigma up to ~4x too large) — the
-sparse high-pT corner needs statistics, not reweighting (pT-balanced loss weights were
-tried and degraded calibration globally); fix = build the dataset from the canonical
-parquet corpus (millions of truth tracks) instead of 48 local files.
-
-```bash
-python tier1b.py --data-dir <dir with *.edm4hep.root> --nfiles 48 --epochs 600
-# -> tier1b.pt + plots/trk_fit/tier1b_validation.pdf (pull widths before/after vs pT)
-```
-
-```bash
-# rerun the validation (needs REC ROOT files, not parquet — it compares vs stored KF states)
-# figure + report land in <repo>/plots/trk_fit/ by default
-python validate_fit.py --data-dir <dir with *.edm4hep.root> --nfiles 48
-```
-
-### Known v0 simplifications
-
-- The geometric block (0–6) for a DCH hit is the **wire point**, with the true crossing
-  constrained only via (13–16)/(17–22). An ambiguity-aware encoding (e.g. feeding both L/R
-  as candidate positions) is the open representation question with Andrea.
-- `thit_time` is not yet in the vector (timing calibration differs per detector; add with a
-  conditioning story).
-- No per-event detector token for the decoder; slots learn detector context through the hits.
+`fit.py` (analytic helix fit), `tier1b.py`, `tier1b_vs_kf.py`, `fit_values_vs_kf.py` and the
+fit hooks in `eval.py`/`train.py` are retired in favor of Genfit2-only fitting and are slated
+for removal; the studies that motivated the decision (fitter-vs-Kalman resolution and
+covariance comparisons on identical hit sets) live in the git history of these files.

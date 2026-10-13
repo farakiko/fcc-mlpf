@@ -145,6 +145,10 @@ def main():
     print(txt)
     with open(os.path.join(args.outdir, "summary.txt"), "w") as f:
         f.write(txt + "\n")
+    # binned arrays for cross-run overlay plots (see genfit/overlay_evals.py)
+    np.savez(os.path.join(args.outdir, "eval_binned.npz"),
+             edges=EDGES, gt_tot=gt_tot, gt_m=gt_m, gt_b=gt_b,
+             fk_m=fk_m, rec_m=rec_m, fk_b=fk_b, rec_b=rec_b, n_ev=n_ev)
 
     # ---- plots ----
     import matplotlib; matplotlib.use("Agg")

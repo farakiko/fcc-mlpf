@@ -270,9 +270,13 @@ def main():
                                             pt_cut=args.pt_cut, min_hits=args.min_hits)
         tst_shards, tst_meta = build_shards(test_files, args.shard_cache,
                                             pt_cut=args.pt_cut, min_hits=args.min_hits)
-        # resident test subsets: val loss (every epoch) + DM eval (every eval-every)
+        # resident test subsets: val loss (every epoch) + DM eval (every eval-every).
+        # Shuffle the shard ORDER first: test shards are grouped by dataset (CLD first),
+        # and loading in order until the subsample is full would silently exclude every
+        # later dataset from the in-training monitor (bit the first mixed run: no IDEA
+        # numbers were tracked). Full per-detector numbers still come from eval.py.
         tst = []
-        for sp in tst_shards:
+        for sp in [tst_shards[i] for i in rng.permutation(len(tst_shards))]:
             tst += load_shard(sp)
             if len(tst) >= max(args.val_events, args.eval_events):
                 break
@@ -332,10 +336,19 @@ def main():
         tot /= max(nev, 1)
 
         model.eval()
+        vdet = {}
         with torch.no_grad():
-            vloss = float(np.mean([event_loss(model, e, dev).item() for e in val_sub]))
-        line = f"ep {ep:3d}  loss {tot:9.3f}  val {vloss:9.3f}  [{time.time()-t0:.0f}s]"
-        rec = dict(ep=ep, loss=tot, val_loss=vloss, sec=round(time.time() - t0, 1))
+            for e in val_sub:
+                vdet.setdefault(e["detector"], []).append(event_loss(model, e, dev).item())
+        vloss = float(np.mean(sum(vdet.values(), [])))
+        rec = dict(ep=ep, loss=tot, val_loss=vloss,
+                   val_loss_det={d: round(float(np.mean(v)), 4) for d, v in vdet.items()},
+                   val_n_det={d: len(v) for d, v in vdet.items()},
+                   sec=round(time.time() - t0, 1))
+        line = f"ep {ep:3d}  loss {tot:9.3f}  val {vloss:9.3f}"
+        if len(vdet) > 1:
+            line += " (" + " ".join(f"{d}:{np.mean(v):.3f}" for d, v in sorted(vdet.items())) + ")"
+        line += f"  [{time.time()-t0:.0f}s]"
         if (ep + 1) % args.eval_every == 0 or ep == args.epochs - 1:
             res = evaluate(model, eval_sub, dev)
             rec["dm"] = {d: [round(v, 4) if v is not None else None for v in r[:4]]
