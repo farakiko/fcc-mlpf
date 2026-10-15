@@ -45,6 +45,14 @@ python train.py --inputs '<derived>/cld_ttbar/chunk_*.parquet' --test-first 45 \
     --slots 200 --lr 1e-4 --epochs 20 \
     --shard-cache /fast/local/shards --outdir runs/t_cld --mirror <persistent dir>
 
+# CLD, all samples (tt̄ + 40/91/160/240/365 GeV): one model across collision energies
+python train.py \
+    --inputs '<derived>/cld_ttbar/chunk_*.parquet' '<derived>/cld_40gev/chunk_*.parquet' \
+             '<derived>/cld_91gev/chunk_*.parquet' '<derived>/cld_160gev/chunk_*.parquet' \
+             '<derived>/cld_240gev/chunk_*.parquet' '<derived>/cld_365gev/chunk_*.parquet' \
+    --test-frac 0.1 --slots 200 --lr 1e-4 --epochs 20 --val-events 1200 --eval-events 1800 \
+    --shard-cache /fast/local/shards --shard-jobs 8 --outdir runs/t_cld_all --mirror <persistent dir>
+
 # mixed-detector training (CLD + IDEA)
 python train.py \
     --inputs '<derived>/cld_ttbar/chunk_*.parquet' '<derived>/idea_o1_zqq/chunk_000[0-4]*.parquet' \
@@ -54,18 +62,27 @@ python train.py \
 # resume after an interruption: same command + --resume runs/<run>/last.pt
 ```
 
-Each parquet file is featurized once into a `.pt` shard (skip-if-exists; shard keys are
-prefixed with the dataset directory, since chunk basenames repeat across datasets) and the
-training loop streams one shard at a time in a freshly shuffled order each epoch, so CLD and
-IDEA events are interleaved in random blocks. `--slots` must exceed the maximum number of
+Each parquet file is featurized once into a shard (skip-if-exists; shard keys are prefixed
+with the dataset directory, since chunk basenames repeat across datasets) and the training
+loop streams one shard at a time in a freshly shuffled order each epoch, so events of
+different samples are interleaved in random blocks. Shards are stored compactly (`.ptz`:
+zlib-compressed, int32 labels, no redundant η/φ copy): about 41 bytes per hit, 4.7 times
+less than plain `torch.save`, at about 2 ms decompression per shard; the six CLD samples
+(1.15 M events) take 27 GB. Shards of earlier caches (`.pt`) are still read. A cache
+can be prebuilt in parallel before training (held-out chunks first):
+
+```bash
+python data.py --inputs '<derived>/cld_*/chunk_*.parquet' --shard-cache DIR --jobs 8 --test-frac 0.1
+```
+ `--slots` must exceed the maximum number of
 true tracks per event in the corpus; the startup line prints `max K`, and training stops with
 an assertion if the default is too small (the CLD tt̄ corpus requires `--slots 200`).
 
 Monitoring: `metrics.jsonl` records, per epoch, the training loss, the validation loss
-overall and per detector (`val_loss_det`), and double-majority efficiency/fake rate per
-detector on a fixed validation subsample (drawn from a shuffled shard order, so all datasets
-are represented); `loss_curve.pdf` is refreshed every epoch; `best.pt` holds the
-highest-efficiency checkpoint and `last.pt` the resume point. `--mirror <dir>` copies these
+overall and per sample (`val_loss_det`; a sample is a dataset directory, e.g. `cld_91gev`),
+and double-majority efficiency/fake rate per sample on a fixed validation subsample drawn
+equally from every sample; `loss_curve.pdf` is refreshed every epoch; `best.pt` holds the
+checkpoint with the highest mean per-sample efficiency and `last.pt` the resume point. `--mirror <dir>` copies these
 artifacts after every epoch.
 
 ## The input feature vector
@@ -111,11 +128,11 @@ hits and more than 50% of the track's hits are its own; a track matching no part
 fake. The in-training monitor uses the same code.
 
 - **Finding level, no fit** — `eval.py` scores a checkpoint on held-out chunks, per
-  detector: efficiency versus true pT (inclusive, and split into prompt, true |d0| < 10 µm,
+  sample (with an all-samples overview, `eval_samples.pdf`): efficiency versus true pT (inclusive, and split into prompt, true |d0| < 10 µm,
   and displaced, > 25 µm), and the inclusive fake rate, with the classical baseline
   evaluated identically where the files carry one (CLD: conformal tracking). A fake has no
   truth particle, so a fake rate versus pT requires a fitted pT and belongs to the next
-  level. Binned counts are saved to `eval_binned_<det>.npz`; `overlay_evals.py` overlays
+  level. Binned counts are saved to `eval_binned_<sample>.npz`; `overlay_evals.py` overlays
   several trainings and the baseline. This level is cheap enough to run on every checkpoint.
 - **Fitted level, Genfit** — the chain in `genfit/` fits the candidates, and
   `genfit/analyze_fitted.py` reports the chain efficiency (found and fit converged), the

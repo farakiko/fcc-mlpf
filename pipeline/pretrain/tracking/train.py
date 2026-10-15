@@ -30,7 +30,7 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from data import build_cache, build_shards, load_shard
+from data import build_cache, build_shards, load_shard, sample_of
 from metrics import dm_match, track_sets
 from model import TrackFormer
 
@@ -103,11 +103,12 @@ def event_loss(model, ev, dev):
 # ------------------------------------------------------------------ DM eval
 @torch.no_grad()
 def evaluate(model, evs, dev, thr=0.5):
-    """-> {detector: (model_eff, model_fake, base_eff|None, base_fake|None, n_gt)}
-    Finding level only (metrics.dm_match); fitted quantities come from the Genfit chain."""
+    """-> {sample: (model_eff, model_fake, base_eff|None, base_fake|None, n_gt)}, sample =
+    dataset (data.sample_of). Finding level only (metrics.dm_match); fitted quantities come
+    from the Genfit chain."""
     acc = {}
     for ev in evs:
-        s = acc.setdefault(ev["detector"], np.zeros(8))
+        s = acc.setdefault(sample_of(ev), np.zeros(8))
         pred = model.assign(torch.from_numpy(ev["x"]).to(dev),
                             torch.from_numpy(ev["etaphi"]).to(dev), thr)
         gts = track_sets(ev["y"], 1)
@@ -179,6 +180,7 @@ def main():
     ap.add_argument("--shard-cache", default="",
                     help="dir for per-file featurized shards; enables streaming (one shard "
                          "in memory at a time) -- use a fast local disk, not EOS")
+    ap.add_argument("--shard-jobs", type=int, default=1, help="parallel shard builders")
     ap.add_argument("--cache", default="", help="optional .pt cache path (in-memory mode)")
     ap.add_argument("--pt-cut", type=float, default=0.1)
     ap.add_argument("--min-hits", type=int, default=3)
@@ -227,27 +229,34 @@ def main():
             test_files, train_files = files[:args.test_first], files[args.test_first:]
         assert test_files, "--shard-cache requires --test-first or --test-frac > 0"
         print(f"{len(train_files)} train files / {len(test_files)} test files; building shards...", flush=True)
-        trn_shards, trn_meta = build_shards(train_files, args.shard_cache,
-                                            pt_cut=args.pt_cut, min_hits=args.min_hits)
-        tst_shards, tst_meta = build_shards(test_files, args.shard_cache,
-                                            pt_cut=args.pt_cut, min_hits=args.min_hits)
-        # resident test subsets: val loss (every epoch) + DM eval (every eval-every).
-        # Shuffle the shard ORDER first: test shards are grouped by dataset (CLD first),
-        # and loading in order until the subsample is full would silently exclude every
-        # later dataset from the in-training monitor (bit the first mixed run: no IDEA
-        # numbers were tracked). Full per-detector numbers still come from eval.py.
+        tst_shards, tst_meta = build_shards(test_files, args.shard_cache, pt_cut=args.pt_cut,
+                                            min_hits=args.min_hits, jobs=args.shard_jobs)
+        trn_shards, trn_meta = build_shards(train_files, args.shard_cache, pt_cut=args.pt_cut,
+                                            min_hits=args.min_hits, jobs=args.shard_jobs)
+        # resident test subsets: val loss (every epoch) + DM eval (every eval-every), drawn
+        # EQUALLY from every dataset (sample directory) from shuffled shards: filling the
+        # subsample from the shard list in order would silently exclude later datasets from
+        # the in-training monitor (bit the first mixed run: no IDEA numbers were tracked).
+        # Full per-sample numbers still come from eval.py.
+        by_ds = {}
+        for f, sp in zip(test_files, tst_shards):
+            by_ds.setdefault(os.path.basename(os.path.dirname(os.path.abspath(f))), []).append(sp)
+        quota = max(args.val_events, args.eval_events) // len(by_ds) + 1
         tst = []
-        for sp in [tst_shards[i] for i in rng.permutation(len(tst_shards))]:
-            tst += load_shard(sp)
-            if len(tst) >= max(args.val_events, args.eval_events):
-                break
+        for ds in sorted(by_ds):
+            got = []
+            for sp in [by_ds[ds][i] for i in rng.permutation(len(by_ds[ds]))]:
+                got += load_shard(sp)
+                if len(got) >= quota:
+                    break
+            tst += got[:quota]
         ridx = rng.permutation(len(tst))
         val_sub = [tst[i] for i in ridx[:args.val_events]]
         eval_sub = [tst[i] for i in ridx[:args.eval_events]]
         del tst
         n_train = trn_meta["n_events"]
         kmax = max(trn_meta["kmax"], tst_meta["kmax"])
-        dets = sorted(set(trn_meta["detectors"]) | set(tst_meta["detectors"]))
+        dets = sorted(set(trn_meta["datasets"]) | set(tst_meta["datasets"]))
     else:  # ---- in-memory mode (small corpora, --check)
         evs = build_cache(files, args.cache, pt_cut=args.pt_cut, min_hits=args.min_hits)
         if args.test_first:
@@ -262,10 +271,10 @@ def main():
         eval_sub = val_sub
         trn_shards, n_train = [trn_evs], len(trn_evs)
         kmax = max(e["K"] for e in evs)
-        dets = sorted(set(e["detector"] for e in evs))
+        dets = sorted(set(sample_of(e) for e in evs))
 
     print(f"{n_train} train / {len(val_sub)} val-loss / {len(eval_sub)} eval events | "
-          f"detectors {dets} | max K {kmax} (slots {args.slots}) | device {dev}", flush=True)
+          f"samples {dets} | max K {kmax} (slots {args.slots}) | device {dev}", flush=True)
     assert args.slots > kmax, "need more slots than max tracks/event"
 
     model = TrackFormer(d=args.dim, slots=args.slots, attn=args.attn, block=args.block).to(dev)
@@ -300,7 +309,7 @@ def main():
         vdet = {}
         with torch.no_grad():
             for e in val_sub:
-                vdet.setdefault(e["detector"], []).append(event_loss(model, e, dev).item())
+                vdet.setdefault(sample_of(e), []).append(event_loss(model, e, dev).item())
         vloss = float(np.mean(sum(vdet.values(), [])))
         rec = dict(ep=ep, loss=tot, val_loss=vloss,
                    val_loss_det={d: round(float(np.mean(v)), 4) for d, v in vdet.items()},

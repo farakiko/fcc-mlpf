@@ -5,11 +5,15 @@ efficiency is binned in TRUE pT, and the fake rate is inclusive (a fake has no t
 particle, so any pT axis for it must come from a fit -- that lives in the Genfit-level
 analysis, genfit/analyze_fitted.py).
 
-Produces (into --outdir), one set PER DETECTOR present in the inputs:
-  eval_tracking_<det>.pdf  -- DM efficiency vs true pT (model + baseline); prompt
-                              (true |d0| < 10 um) vs displaced (> 25 um) efficiency
-  eval_binned_<det>.npz    -- binned counts for cross-run overlays (overlay_evals.py)
-  summary.txt              -- the headline numbers, all detectors
+Produces (into --outdir), one set PER SAMPLE (dataset directory, e.g. cld_91gev; shards
+built before 2026-10-15 carry only the detector name) present in the inputs:
+  eval_tracking_<sample>.pdf  -- DM efficiency vs true pT (model + baseline); prompt
+                                 (true |d0| < 10 um) vs displaced (> 25 um) efficiency
+  eval_binned_<sample>.npz    -- binned counts for cross-run overlays (overlay_evals.py)
+and, for all samples together:
+  eval_samples.pdf            -- (several samples) efficiency vs true pT per sample, and
+                                 inclusive efficiency / fake rate per sample
+  summary.txt                 -- the headline numbers
 
 Usage:
   python eval.py --ckpt runs/t_cld90k/best.pt \
@@ -20,13 +24,14 @@ Matching and selection: metrics.py (identical to the in-training monitor).
 import argparse
 import glob as globlib
 import os
+import re
 import sys
 
 import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from data import build_cache, build_shards, load_shard
+from data import build_cache, build_shards, load_shard, sample_of
 from metrics import dm_match, track_sets
 from model import load_checkpoint
 
@@ -115,11 +120,47 @@ def plot(det, a, out_pdf):
     fig.tight_layout(); fig.savefig(out_pdf); plt.close(fig)
 
 
+def plot_samples(acc, out_pdf):
+    """All samples on one figure: efficiency vs true pT, and inclusive efficiency / fake rate."""
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    def energy(n):                                  # order samples by collision energy
+        m = re.search(r"(\d+)gev", n)
+        return (int(m.group(1)) if m else 10**9, n)
+    names = sorted(acc, key=energy)
+    cols = plt.cm.viridis(np.linspace(0, 0.9, len(names)))
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
+    for n, c in zip(names, cols):
+        a = acc[n]; ok = a["gt_tot"] > 20
+        axes[0].plot(CTR[ok], (a["gt_m"] / np.maximum(a["gt_tot"], 1))[ok], "o-", color=c, label=n)
+        if a["has_base"]:
+            axes[0].plot(CTR[ok], (a["gt_b"] / np.maximum(a["gt_tot"], 1))[ok], "s--", color=c,
+                         lw=1, ms=3)
+    axes[0].set_xscale("log"); axes[0].set_xlabel("true $p_T$ [GeV]"); axes[0].set_ylim(0, 1.05)
+    axes[0].set_ylabel("DM efficiency (dashed: baseline tracking)"); axes[0].grid(alpha=0.3)
+    axes[0].legend(fontsize=9)
+    xs = np.arange(len(names))
+    eff = lambda a, s: a[f"gt_{s}"].sum() / max(a["gt_tot"].sum(), 1)
+    fake = lambda a, s: a[f"n_fake_{s}"] / max(a[f"n_rec_{s}"], 1)
+    axes[1].plot(xs, [eff(acc[n], "m") for n in names], "o-", color="tab:blue", label="ML tracking, efficiency")
+    axes[1].plot(xs, [fake(acc[n], "m") for n in names], "o:", color="tab:blue", label="ML tracking, fake rate")
+    if any(acc[n]["has_base"] for n in names):
+        axes[1].plot(xs, [eff(acc[n], "b") if acc[n]["has_base"] else np.nan for n in names], "s--",
+                     color="tab:orange", label="baseline tracking, efficiency")
+        axes[1].plot(xs, [fake(acc[n], "b") if acc[n]["has_base"] else np.nan for n in names], "s:",
+                     color="tab:orange", label="baseline tracking, fake rate")
+    axes[1].set_xticks(xs); axes[1].set_xticklabels(names, rotation=20)
+    axes[1].set_ylim(0, 1.05); axes[1].set_ylabel("inclusive DM efficiency / fake rate")
+    axes[1].grid(alpha=0.3); axes[1].legend(fontsize=9)
+    fig.tight_layout(); fig.savefig(out_pdf); plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--inputs", nargs="+", required=True, help="held-out parquet file(s)/glob(s)")
     ap.add_argument("--shard-cache", default="", help="reuse the training shard cache")
+    ap.add_argument("--shard-jobs", type=int, default=1, help="parallel shard builders")
     ap.add_argument("--max-events", type=int, default=0, help="0 = all")
     ap.add_argument("--thr", type=float, default=0.5)
     ap.add_argument("--outdir", default=".")
@@ -133,7 +174,8 @@ def main():
     files = sorted(sum([globlib.glob(p) if any(c in p for c in "*?[") else [p]
                         for p in args.inputs], []))
     assert files, f"no inputs match {args.inputs}"
-    shards = build_shards(files, args.shard_cache)[0] if args.shard_cache else [build_cache(files, "")]
+    shards = (build_shards(files, args.shard_cache, jobs=args.shard_jobs)[0] if args.shard_cache
+              else [build_cache(files, "")])
 
     acc, n_ev = {}, 0
     for sp in shards:
@@ -143,7 +185,7 @@ def main():
             n_ev += 1
             pred = model.assign(torch.from_numpy(ev["x"]).to(dev),
                                 torch.from_numpy(ev["etaphi"]).to(dev), args.thr)
-            accumulate(acc.setdefault(ev["detector"], new_acc()), ev, pred)
+            accumulate(acc.setdefault(sample_of(ev), new_acc()), ev, pred)
 
     lines = [f"eval: {n_ev} events, ckpt {args.ckpt}"]
     for det, a in sorted(acc.items()):
@@ -154,7 +196,10 @@ def main():
     print(txt)
     with open(os.path.join(args.outdir, "summary.txt"), "w") as f:
         f.write(txt + "\n")
-    print(f"wrote {args.outdir}/eval_tracking_<det>.pdf, eval_binned_<det>.npz, summary.txt")
+    if len(acc) > 1:
+        plot_samples(acc, os.path.join(args.outdir, "eval_samples.pdf"))
+    print(f"wrote {args.outdir}/eval_tracking_<sample>.pdf, eval_binned_<sample>.npz, summary.txt"
+          + (", eval_samples.pdf" if len(acc) > 1 else ""))
 
 
 if __name__ == "__main__":

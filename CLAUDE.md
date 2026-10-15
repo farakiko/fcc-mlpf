@@ -164,7 +164,8 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   no-material value. Prime suspect: the material Genfit sees for IDEA_o1_v04 (beam pipe /
   vertex) — fitter side, not the finder (same chain is honest on CLD). Decisive tests: fit
   TRUTH hit sets (truth-finder chain), check Genfit's material interface on IDEA_o1_v04
-  (De Vita's tests use IDEA_o1_v03), ask Andrea. Until then, no IDEA fitted-level claims. Fitter geometry: CLD = vendored production copy (repo:), IDEA =
+  (De Vita's tests use IDEA_o1_v03). USER DECISION 2026-10-15: do not debug this ourselves —
+  ask Andrea and reuse his IDEA Genfit setup. Until then, no IDEA fitted-level claims. Fitter geometry: CLD = vendored production copy (repo:), IDEA =
   nightly K4GEO IDEA_o1_v04 (WireTrackerName DCH_v2; SolenoidField 2 T).
 - **Known-good fixes in train.py/data.py** (2026-10-13, committed): test-shard subsample shuffled (else the in-training monitor silently covers only the
   alphabetically first dataset — bit the first mixed run: no IDEA numbers tracked);
@@ -191,6 +192,26 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   Its train.py/data.py/model.py are byte-identical to commit 4a1b2d9 (only eval.py differs:
   3 legend labels) => t_mixed provenance = 4a1b2d9; the copy is redundant (deletion pending
   user OK; point the manifest at the clone pinned to 4a1b2d9 if the job is ever resumed).
+
+- **CLD all-energies training (user, 2026-10-15; current focus)**: one CLD-only [T] model on
+  cld_ttbar + cld_{40,91,160,240,365}gev (1.15M events, 5749 chunks; all six carry the
+  conformal baseline). Hope: better convergence from more/diverse data and coverage of every
+  energy. Setup: compact .ptz shard cache /shared/fcc-mlpf-shards/cld_all (27 GB, 5749 shards, built 2026-10-15; prebuilt
+  on pf-pod with `python data.py --jobs 7 --test-frac 0.1`), per-sample monitoring and eval
+  (sample = dataset dir), job manifest mlpf/kube/train_job_tracking_cldall.yml (job
+  mlpf-t-energies, run dir /shared/runs/t_cld_all, 20 epochs, lr 1e-4, slots 200; held-out
+  max K 161). Benchmark (MIG 1g.12gb): 11/12/12/14.5/14/20 ms per training event for
+  40/91/160/240/365/ttbar -> ~4 h/epoch, ~82 h total. Reference before training: the
+  ttbar-only (t_cld90k) and mixed (t_mixed) checkpoints evaluated per energy on the first 10
+  held-out chunks of each sample (/shared/runs/energies_ref/; 2000 events per sample):
+  ttbar-only eff/fake 0.753/0.078 (40), 0.764/0.066 (91), 0.767/0.071 (160), 0.762/0.072
+  (240), 0.756/0.082 (365), 0.766/0.087 (ttbar); mixed CLD+IDEA 0.756/0.045, 0.776/0.042,
+  0.785/0.047, 0.782/0.052, 0.779/0.063, 0.791/0.072; baseline 0.606-0.652 / 0.159-0.223.
+  The ttbar-only model already transfers across energies (plateau 0.93-0.96 above 1 GeV);
+  the headroom is below 1 GeV (~0.4 at 0.15 GeV) and in fakes. The mixed model is better at
+  EVERY CLD energy (fakes down ~1/3 at 40-240 GeV): diversity helps beyond the training
+  energy — the new run must beat both references, per energy. Pod CPU quota is 7 cores
+  (nproc reports 384).
 
 ## Roadmap (user, 2026-10-13 — the plan for the next sessions, in order)
 
@@ -267,7 +288,8 @@ directory; this file supersedes it.
   `production/cld/campaigns/`. `validation/audit_edm4hep.py` = executable data spec.
 - `postprocessing/` EDM4hep → canonical parquet (schema v0.2, `schema.py` audits); condor
   striping in `postprocessing/condor/`; every derived dataset carries a SOURCE.txt.
-- `pipeline/pretrain/tracking/` [T]: `data.py` (features/shards), `model.py` (+ the hit-
+- `pipeline/pretrain/tracking/` [T]: `data.py` (features/shards; `python data.py` prebuilds a
+  shard cache in parallel), `model.py` (+ the hit-
   assignment rule `TrackFormer.assign`, `load_checkpoint`), `metrics.py` (shared definitions),
   `train.py`, `eval.py`, `overlay_evals.py`, `plot_features.py`; `genfit/`: `detectors.py`
   (per-detector config), `export_infer.py` (A), `write_mltracks.py` (B), `run_genfit.py` (C),
