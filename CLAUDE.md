@@ -115,18 +115,37 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
 - **Fit failures, re-measured 2026-10-15** with analyze_fitted.py (chi2/ndf criterion) on the
   study's fitted files: 8.8% (2954/33661, single) and 9.2% (1552/16952, mixed) — the old
   hit-overlap number stands. Failed fits appear in the output as chi2 = ndf = -1 tracks (one
-  output per input, in order, confirmed on the 2026-10-04 nightly). Failure-mode study
-  (inputs: plots/trk_fit/v4/out_e1/candidates_*.parquet + candidate_hits_*.parquet; script
-  genfit/fit_failure_study.py) in progress.
-- **Cross-chain comparison caveat (found 2026-10-15)**: resolutions and the d0-significance
-  ROC are computed on each chain's OWN matched sample, so chains with different efficiencies
-  are compared on different populations. Under DM matching the baseline now looks better at
-  0.2-1 GeV in d0 (62 vs 73 um at 0.2-0.5) and its ROC lies above the ML chains — the ML
-  chains find many more (harder, displaced) tracks. The 10-13 statement "ROC equivalent,
-  resolutions equal-or-better" must not be quoted until the comparison is redone on the
-  particles ALL chains reconstruct (planned analyze_fitted option). pT resolution and the
-  d0 pull widths (ML ~0.9-1.0, baseline up to 1.8 at high pT) favor the ML chains in the
-  current comparison, subject to the same caveat.
+  output per input, in order, confirmed on the 2026-10-04 nightly).
+- **Fit-failure study (2026-10-15, genfit/fit_failure_study.py, plots/trk_fit/fit_failures/)**:
+  failures are hit-set problems, not softness per se. Exclusive shares of the 2954 failures:
+  contaminated candidates (0.5 < purity < 1: 25.7% fail) 57.6%; impure (purity <= 0.5:
+  78.6% fail) 13.2%; clean but BOTH LEGS of a curler present (a layer holding two hits
+  > 20 mm apart: 73% fail) 16.2%; clean, owner produced at r > 100 mm (7.3% fail) 6.0%;
+  clean single-leg prompt-ish (0.7% fail) 5.7%. One foreign hit raises the failure rate
+  12 -> 44% (pT < 0.3 GeV), 6.5 -> 30% (0.3-1), 0.2 -> 5% (> 1). Clean prompt pions fail
+  3.9/1.8/0.1% in those bins. Electrons do NOT fail more when clean (brems off / pion
+  hypothesis show up as bad chi2 instead: 17-24% of converged clean e have p < 1%).
+  Hypotheses to test (not conclusions): hit ordering along the arc / splitting curlers at
+  the apex (fitter side); dropping the worst-residual hit or a per-hit assignment confidence
+  (finder side); particle-hypothesis list [211, 11, 2212] for chi2.
+- **Fitted-level comparison, apples to apples (2026-10-15; plots/trk_fit/v4/out_b1/)**. Each
+  chain's own matched sample compares different populations, so analyze_fitted.py now also
+  reports a COMMON sample (particles every chain reconstructs; 10,820 in 290 events of the
+  10-13 study files) and an ABSOLUTE ROC (normalized to all true particles of the class).
+  The baseline was refitted with Genfit ("baseline tracking + Genfit", run_genfit.py
+  --inputTracks SiTracks_Refitted --outputTracks GenfitBaseTracks) to remove the fitter
+  confound. Same particles, same fitter: ML hit sets give better d0 at 1-20 GeV (7.2 vs 8.1 um
+  at 2-5 GeV; 3.3 vs 3.7 at 10-20; 2.6-2.7 vs 2.5 at 20-100), z0 equal or better (33 vs 35 um
+  at 0.5-1 GeV), pT better below 1 GeV (1.17 vs 1.28% at 0.2-0.5), but WORSE d0 at 0.2-0.5 GeV
+  (67.7/69.8 vs 57.8 um) — a hit-content effect (hypothesis: missing/foreign vertex-layer hits
+  at low pT; consistent with the contamination finding). The stored CLD-KF covariances are the
+  source of the baseline's inflated high-pT d0 pulls (1.8); refitted with Genfit they are
+  0.8-1.15 like the ML chains. ROC b/c/tau vs prompt at 1% mistag: per track on the same
+  particles ML 0.67/0.68 vs baseline+Genfit 0.71 (ML prompt tracks have a far |d0/sigma| tail);
+  absolute ML 0.64/0.66 vs 0.60 (ML finds more HF tracks). Chain efficiency per truth origin
+  (290 events): prompt ML 0.91/0.92 vs base 0.88; b/c/tau 0.94/0.96 vs 0.85; V0 0.64/0.68 vs
+  0.46; material 0.30/0.34 vs 0.12; decays in flight 0.10 vs 0.05. Retire the 10-13 wording
+  "ROC equivalent, resolutions equal-or-better" in favor of these numbers.
 - **Genfit-only refactor (2026-10-15)**: helix fit + tier-1b + validate_fit removed;
   fitted_chain_vs_baseline.py + why_fits_fail.py merged into genfit/analyze_fitted.py;
   overlay_evals.py moved to tracking/; run_genfit_cld.py -> run_genfit.py. Validated LOCALLY
@@ -134,21 +153,50 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   eval.py efficiency counts identical to the old eval; analyze_fitted's finding eff on REC
   files == eval.py's baseline eff on the same events (0.6595). ON THE CLUSTER (2026-10-15,
   /shared/scratch-genfit-test/v4/): CLD steps A-C bit-identical to the old chain (labels,
-  MLTracks, 516 Genfit states with zero difference); IDEA full chain A-E runs (10 events:
-  88% converge, chain eff 0.69, fake 3%, pT res 0.1-0.3%) — first Genfit fits of ML tracks
-  with drift-chamber hits. Fitter geometry: CLD = vendored production copy (repo:), IDEA =
+  MLTracks, 516 Genfit states with zero difference); IDEA full chain A-E runs — first Genfit
+  fits of ML tracks with drift-chamber hits. IDEA held-out chunk 0 (500 Z->uds events, mixed
+  checkpoint, plots/trk_fit/v4/i2/): finding eff 0.726 (= eval.py's 0.727), chain eff 0.643,
+  fit failures 12.2% (91% of them pure candidates < 1 GeV), fake 4.1%, pT resolution
+  0.11-0.15% at 1-10 GeV (3x better than CLD: drift chamber). BUT the covariances are NOT
+  honest at low pT: pull widths ~9-10 for d0/phi/z0/tanl (omega 4.7) at 0.2-0.5 GeV, ~3 at
+  0.5-1, ~1.3 above 1 GeV, for pions as much as K/p/e (not the mass hypothesis). Pions < 0.5
+  GeV with >= 3 vertex hits: true d0 scatter 87 um, reported sigma(d0) 9 um — about the
+  no-material value. Prime suspect: the material Genfit sees for IDEA_o1_v04 (beam pipe /
+  vertex) — fitter side, not the finder (same chain is honest on CLD). Decisive tests: fit
+  TRUTH hit sets (truth-finder chain), check Genfit's material interface on IDEA_o1_v04
+  (De Vita's tests use IDEA_o1_v03), ask Andrea. Until then, no IDEA fitted-level claims. Fitter geometry: CLD = vendored production copy (repo:), IDEA =
   nightly K4GEO IDEA_o1_v04 (WireTrackerName DCH_v2; SolenoidField 2 T).
 - **Known-good fixes in train.py/data.py** (2026-10-13, committed): test-shard subsample shuffled (else the in-training monitor silently covers only the
   alphabetically first dataset — bit the first mixed run: no IDEA numbers tracked);
   per-detector val loss (`val_loss_det`) recorded per epoch; shard-cache keys are
   dataset-dir-prefixed (chunk basenames collide across datasets).
 
+- **"Displaced" definition under review (user question, 2026-10-15)**. The prompt (true |d0|
+  < 10 um) / displaced (> 25 um) thresholds were set in the 10-13 session without a recorded
+  derivation. Truth-origin study (scratch, /shared/scratch-genfit-test/v4/origin_d0.py; class =
+  nearest weakly decaying ancestor, metrics.origin_class): CLD tt̄ 365 GeV has NO beam-spot
+  smearing (prompt true d0 = 0 exactly); b/c/tau-decay tracks (17% of reconstructable charged)
+  have median |d0| 131 um, 79% > 25 um (14/17/28% below 25 um at pT 0.1-1 / 1-5 / > 5 GeV).
+  But the "> 25 um" class is only 29% heavy flavour: 17% strange V0 decays, 31% pi/K decays
+  in flight, 23% material secondaries (|d0| mm to m). IDEA Z->uds: beam spot sigma_x 5.8 um
+  (prompt |d0| up to ~15 um), heavy flavour 0.4% (g -> cc), "> 25 um" = 99% secondaries.
+  Consequence: the 10-13 "displaced efficiency +15-20 points on the plateau" is measured on a
+  population that is 71% secondaries; it cannot be attributed to HF tracks without the
+  per-origin efficiency split. analyze_fitted.py has `--classes origin` (HF vs prompt); eval.py still
+  uses the d0 thresholds — switching it needs the IDEA canonical parquet to carry ancestry
+  (process_tree.py stores only particles with hits, so mc_parent chains break). Decision
+  pending with the user.
+- **/shared/mlpf-t-mixed-code** = flat copy (no git) of pipeline/pretrain/tracking from
+  2026-10-08 that the mlpf-t-mixed job ran from (mlpf/kube/train_job_tracking_mixed.yml).
+  Its train.py/data.py/model.py are byte-identical to commit 4a1b2d9 (only eval.py differs:
+  3 legend labels) => t_mixed provenance = 4a1b2d9; the copy is redundant (deletion pending
+  user OK; point the manifest at the clone pinned to 4a1b2d9 if the job is ever resumed).
+
 ## Roadmap (user, 2026-10-13 — the plan for the next sessions, in order)
 
 1. **Genfit-only refactor** (prerequisite hygiene). DONE 2026-10-15: helix-fit removal,
    two-level evaluation, `--detector` flag, cluster smoke tests (CLD identical to the old
-   chain; IDEA end-to-end). REMAINING: common-sample comparison option in analyze_fitted
-   (see caveat above), output slimming (`outputCommands`), port the study driver's per-file
+   chain; IDEA end-to-end), common-sample + absolute-ROC views. REMAINING: output slimming (`outputCommands`), port the study driver's per-file
    parallelization (/shared/scratch-genfit-test/run_study_v3.sh: xargs -P over files for
    steps A/B, one k4run over a comma list) into the scripts, condor wrapper.
 1b. **Fit-failure study** (user, 2026-10-15): why do ~9% of ML candidates not converge —

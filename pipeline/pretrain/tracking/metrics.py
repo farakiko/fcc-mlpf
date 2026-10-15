@@ -77,6 +77,42 @@ def truth_perigee(vx, vy, vz, px, py, pz, q, B):
     return d0, phi0, omega, z0, tanl
 
 
+# weakly decaying ground states (cτ >~ 50 µm): heavy flavour + tau, long-lived strange
+HF_WEAK = {511, 521, 531, 541, 5122, 5132, 5232, 5332, 411, 421, 431, 4122, 4132, 4232, 4332, 15}
+STRANGE_LL = {310, 130, 3122, 3112, 3222, 3312, 3322, 3334}
+ORIGINS = ("prompt", "hf", "strange", "inflight", "material")
+
+
+def origin_class(k, pdg, genstatus, first_parent, max_depth=200):
+    """Truth origin of MC particle k (the displacement it carries):
+      hf        generator descendant of a weakly decaying b/c hadron or tau (|d0| ~ ctau)
+      strange   descendant of K0S/K0L/Lambda/Sigma/Xi/Omega (generator- or simulator-decayed)
+      inflight  simulator-created decay product of a pi/K decaying in flight
+      material  any other simulator-created particle (conversions, hadronic interactions)
+      prompt    everything else: produced at the primary vertex (strong/EM decays included)
+    The nearest weakly decaying ancestor decides (a K0S from a B decay is 'strange').
+    first_parent(i) -> MC row of the first parent of i, or -1."""
+    p = first_parent(k)
+    if genstatus[k] == 0:                                     # created by the simulator
+        a = abs(int(pdg[p])) if p >= 0 else 0
+        if a in STRANGE_LL:
+            return "strange"
+        if a in HF_WEAK:
+            return "hf"
+        if (a in (211, 321) and abs(int(pdg[k])) in (11, 13)) or (a == 321 and abs(int(pdg[k])) == 211):
+            return "inflight"
+        return "material"
+    n = 0
+    while p >= 0 and n < max_depth:
+        a = abs(int(pdg[p]))
+        if a in HF_WEAK:
+            return "hf"
+        if a in STRANGE_LL:
+            return "strange"
+        p, n = first_parent(p), n + 1
+    return "prompt"
+
+
 def pt_from_omega(omega, B):
     return C_LIGHT * B / np.maximum(np.abs(omega), 1e-12)
 

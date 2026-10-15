@@ -77,16 +77,27 @@ double majority. In addition:
   impure candidates, so this rate is below the finding-level fake rate of `../eval.py`.
 - **resolution sample**: found, converged, dominant particle produced at r < 100 mm; the
   truth reference is the analytic helix from the MC production point transported to the
-  beamline (`metrics.truth_perigee`, fitter-free). Each chain's resolutions and ROC are
-  computed on its OWN matched sample: chains with different efficiencies are compared on
-  different particle populations (a chain that also finds harder, more displaced tracks is
-  penalized for it). A comparison restricted to the particles all chains reconstruct is
-  the planned remedy.
+  beamline (`metrics.truth_perigee`, fitter-free).
+- **three views** of resolutions and the d0-significance ROC. *Own*: each chain's own
+  resolution sample — chains with different efficiencies are then compared on different
+  particle populations. *Common*: the particles every chain reconstructs, in the events every
+  chain processed (matched by an MC fingerprint) — identical truth, so differences come from
+  the hit content and the fit alone. *Absolute*: the ROC normalized to all true particles of
+  a class, found or not — it folds in the finding and fit efficiency (the impact-parameter
+  tagging view).
+- **classes** (`--classes`): `d0` = true |d0| > 25 µm vs < 10 µm; `origin` = tracks from
+  b/c/τ decays vs prompt tracks, by MC ancestry (`metrics.origin_class`: the nearest weakly
+  decaying ancestor decides; simulator-created particles are V0-decay, decay-in-flight or
+  material secondaries). The efficiency per origin class is tabulated in either mode.
+- A chain can carry its own collection names (`--chain "LABEL=GLOB@CAND,FIT"`), e.g. the
+  baseline refitted with Genfit (`run_genfit.py --inputTracks SiTracks_Refitted
+  --outputTracks GenfitBaseTracks`) next to the stored-Kalman baseline.
 
-Outputs: `fitted_eff_<tag>.pdf`, `fitted_res_<tag>.pdf`, `fitted_<tag>.txt` (including a
-fit-failure table by candidate class), and per chain `candidates_<tag>_<chain>.parquet` with
-one row per candidate (fit status, hit counts, purity, dominant-particle truth) for
-fit-failure studies.
+Outputs: `fitted_eff_<tag>.pdf`, `fitted_res_<tag>.pdf` (own view), `fitted_common_<tag>.pdf`
+(common view + absolute ROC), `fitted_<tag>.txt` (including a fit-failure table by candidate
+class and the signal efficiency at 1% mistag in the three views), and per chain
+`candidates_<tag>_<chain>.parquet` with one row per candidate (fit status, hit counts,
+purity, dominant-particle truth), the input of `fit_failure_study.py`.
 
 ## Commissioning status
 
@@ -99,11 +110,16 @@ fit-failure studies.
   2026-10-13 fitted samples with step E: fit failures 8.8% (2954 of 33661 candidates,
   single-detector training) and 9.2% (mixed), unchanged under the chi2/ndf criterion;
   81% of the failures come from candidates whose dominant particle has pT < 1 GeV.
-- IDEA (2026-10-15), held-out chunk 0 ↔ its digi file, mixed-detector checkpoint, 10
-  events: the full chain runs (drift-chamber hits are `edm4hep::SenseWireHit`, planar hits
-  `TrackerHitPlane`; the replayed hit order matched step A in all 500 events of step B).
-  199 candidates, 88% converge; chain efficiency 0.69 (finding 0.78); fake rate among
-  converged tracks 3%; pT resolution 0.1–0.3% between 0.5 and 5 GeV.
+- IDEA (2026-10-15), held-out chunk 0 ↔ its digi file (500 Z→uds events), mixed-detector
+  checkpoint: the full chain runs (drift-chamber hits are `edm4hep::SenseWireHit`, planar
+  hits `TrackerHitPlane`; the replayed hit order matched step A in all 500 events). 9553
+  candidates; 12.2% fit failures, 91% of them from pure candidates below 1 GeV; chain
+  efficiency 0.64 (finding 0.73); fake rate among converged tracks 4.1%; pT resolution
+  0.11–0.15% between 1 and 10 GeV. The covariances are not yet honest: pull widths of 9–10
+  at 0.2–0.5 GeV, about 3 at 0.5–1 GeV and 1.2–1.4 above, for all species and all track
+  parameters (ω: 4.7 at low pT). For pions below 0.5 GeV with at least three vertex hits the
+  reported σ(d0) is 9 µm against a true scatter of 87 µm, close to a fit without material.
+  Under investigation (material seen by the fitter on IDEA_o1_v04; a fit of truth hit sets).
 
 ## Configuration notes
 

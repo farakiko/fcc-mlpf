@@ -39,6 +39,9 @@ parser.add_argument("--inputFile", required=True,
 parser.add_argument("--outputFile", default="genfit_fitted.edm4hep.root")
 parser.add_argument("--inputTracks", default="SiTracks_Refitted",
                     help="name of the input TrackCollection to refit")
+parser.add_argument("--outputTracks", default="GenfitTracks",
+                    help="name of the fitted TrackCollection (change it to refit a file that "
+                         "already carries GenfitTracks, e.g. the baseline after an ML chain)")
 parser.add_argument("--nev", type=int, default=-1)
 parser.add_argument("--geometry", default="",
                     help="compact XML (default: the detector's entry in detectors.py under $K4GEO)")
@@ -54,9 +57,9 @@ from Configurables import GenfitTrackFitter
 fitter = GenfitTrackFitter(
     "GenfitTrackFitter",
     InputTracks=[args.inputTracks],
-    OutputFittedTracks=["GenfitTracks"],
-    OutputFittedTracksWithFilteredHits=["GenfitTracksFilteredHits"],
-    OutputFittedHits=["GenfitHits"],
+    OutputFittedTracks=[args.outputTracks],
+    OutputFittedTracksWithFilteredHits=[args.outputTracks + "FilteredHits"],
+    OutputFittedHits=["GenfitHits" if args.outputTracks == "GenfitTracks" else args.outputTracks + "Hits"],
     OutputLevel=INFO,
 )
 fitter.UseBrems = False

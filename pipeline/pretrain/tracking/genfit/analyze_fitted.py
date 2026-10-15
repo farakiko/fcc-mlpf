@@ -19,12 +19,26 @@ Definitions (metrics.py, identical to train.py / eval.py):
                     different questions
   resolution sample found AND converged, owner produced at r < --max-prod-r (truth
                     reference: metrics.truth_perigee, fitter-free)
+  three views of resolutions and the d0-significance ROC:
+    own       each chain's own resolution sample -- chains with different efficiencies are
+              compared on DIFFERENT particle populations (a chain that also finds harder,
+              more displaced tracks is penalized for it)
+    common    the particles that EVERY chain reconstructs, in the events every chain
+              processed (events matched by an MC fingerprint): identical truth, so the
+              differences come from the hit content and the fit alone
+    absolute  ROC normalized to ALL true particles of a class in those events (unfound or
+              unconverged ones never pass a cut): folds in the finding + fit efficiency,
+              i.e. the impact-parameter tagging view
+  --classes   ROC signal/background: "d0" = true |d0| > 25 um vs < 10 um; "origin" = tracks
+              from b/c/tau decays vs prompt tracks (metrics.origin_class, MC ancestry)
 
 Output (--outdir): fitted_eff_<tag>.pdf (chain/finding efficiency vs true pT, fake rate vs
-Genfit pT, fit-failure rate), fitted_res_<tag>.pdf (d0/z0/pT resolution, d0 pull width,
-d0 significance, prompt-vs-displaced ROC), fitted_<tag>.txt (tables), and per chain
-candidates_<tag>_<chain>.parquet: one row per candidate (fit status, hit counts, purity,
-dominant-owner truth) -- the input of fit-failure studies.
+Genfit pT, fit-failure rate), fitted_res_<tag>.pdf (own sample: d0/z0/pT resolution, d0
+pull width, d0 significance, ROC), fitted_common_<tag>.pdf (common sample: resolutions,
+pull width, ROC; absolute ROC), fitted_<tag>.txt (tables, incl. signal efficiency at 1%
+mistag in the three views), and per chain candidates_<tag>_<chain>.parquet: one row per
+candidate (fit status, hit counts, purity, dominant-owner truth) -- the input of fit-failure
+studies (fit_failure_study.py).
 
   python analyze_fitted.py --detector cld \
       --chain "single-detector training=fitted_single/*.root" \
@@ -44,8 +58,8 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, ".."))
 import detectors
 import edm4hep_io as io
-from metrics import (dm_match, iqr_sigma, pt_from_omega, truth_perigee, truth_selection,
-                     wrap)
+from metrics import (ORIGINS, dm_match, iqr_sigma, origin_class, pt_from_omega, truth_perigee,
+                     truth_selection, wrap)
 
 EFF_EDGES = np.array([0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100])   # = eval.py
 RES_EDGES = np.array([0.2, 0.5, 1, 2, 5, 10, 20, 100])
@@ -79,19 +93,30 @@ def converged(st):
 
 def new_acc():
     nb = len(EFF_EDGES) - 1
-    a = {k: np.zeros(nb) for k in ("gt", "found", "chain", "gt_p", "chain_p", "gt_d", "chain_d",
-                                   "fit", "fit_fake", "own", "own_fail")}
-    a.update(P=[], S=[], Y=[], PT=[], rows=[], n_cand=0, n_conv=0, n_conv_fake=0)
+    a = {k: np.zeros(nb) for k in ("gt", "found", "chain", "fit", "fit_fake", "own", "own_fail")}
+    a.update(parts=[], rows=[], n_cand=0, n_conv=0, n_conv_fake=0)
     return a
 
 
-def process(files, cfg, cand_name, fit_name, B, max_prod_r, a):
+def event_key(m):
+    """Fingerprint of the generated event, so chains run over different files can be matched."""
+    return (len(m["px"]), round(float(np.abs(m["px"]).sum() + np.abs(m["py"]).sum()
+                                      + np.abs(m["pz"]).sum()), 3))
+
+
+def process(files, cfg, cand_name, fit_name, B, a):
     for fp in files:
         ef = io.EventFile(fp)
         for i in range(ef.n):
             keys, role, mc = io.hit_rows(ef, i, cfg)
             row = {k: j for j, k in enumerate(keys)}
             m = io.mc_block(ef, i)
+            ekey = event_key(m)
+            gs = ef.arr("MCParticles/MCParticles.generatorStatus", i)
+            pb = ef.arr("MCParticles/MCParticles.parents_begin", i)
+            pe = ef.arr("MCParticles/MCParticles.parents_end", i)
+            pix = ef.arr("_MCParticles_parents/_MCParticles_parents.index", i)
+            first_parent = lambda j: int(pix[pb[j]]) if pe[j] > pb[j] else -1
             keep = truth_selection(mc, m["px"], m["py"], m["q"])
             gts = {int(k): set(np.nonzero(mc == k)[0].tolist()) for k in keep}
             cand = io.track_hits(ef, i, cand_name)
@@ -102,23 +127,24 @@ def process(files, cfg, cand_name, fit_name, B, max_prod_r, a):
             _, pairs = dm_match({k: s for k, s in recos.items() if s}, gts)
             found = dict(pairs)                                  # candidate -> particle
             found_t = set(found.values())
+            cand_of = {t: k for k, t in pairs}
             conv = [fidx[k] is not None and converged(states[fidx[k]]) for k in range(len(cand))]
             chain_found = {t for k, t in pairs if conv[k]}
-            # efficiency (true pT), prompt/displaced split by true d0
+            # per truth particle: efficiency (true pT) + one record for the resolution views
             for t in gts:
                 pt = float(np.hypot(m["px"][t], m["py"][t]))
                 bi = np.searchsorted(EFF_EDGES, pt) - 1
-                if not 0 <= bi < len(EFF_EDGES) - 1:
-                    continue
-                d0 = abs(truth_perigee(m["vx"][t], m["vy"][t], m["vz"][t], m["px"][t],
-                                       m["py"][t], m["pz"][t], m["q"][t], B)[0])
-                a["gt"][bi] += 1
-                a["found"][bi] += t in found_t
-                a["chain"][bi] += t in chain_found
-                for suf, sel in (("_p", d0 < PROMPT_MAX), ("_d", d0 > DISPLACED_MIN)):
-                    if sel:
-                        a["gt" + suf][bi] += 1
-                        a["chain" + suf][bi] += t in chain_found
+                if 0 <= bi < len(EFF_EDGES) - 1:
+                    a["gt"][bi] += 1
+                    a["found"][bi] += t in found_t
+                    a["chain"][bi] += t in chain_found
+                y = truth_perigee(m["vx"][t], m["vy"][t], m["vz"][t], m["px"][t], m["py"][t],
+                                  m["pz"][t], m["q"][t], B)
+                st = states[fidx[cand_of[t]]] if t in chain_found else None
+                a["parts"].append(dict(ev=ekey, t=t, pt=pt, y=np.asarray(y, np.float64), found=t in found_t,
+                                       r=float(np.hypot(m["vx"][t], m["vy"][t])),
+                                       origin=origin_class(t, m["pdg"], gs, first_parent),
+                                       par=st["par"] if st else None, sig=st["sig"] if st else None))
             # per candidate: fit status, fake rate vs Genfit pT, failure characterization
             for k, rs in recos.items():
                 if not rs:
@@ -148,19 +174,8 @@ def process(files, cfg, cand_name, fit_name, B, max_prod_r, a):
                 a["rows"].append((os.path.basename(fp), i, k, len(rs), int(np.sum(role[sorted(rs)] == WIRE_ROLE)),
                                   bool(conv[k]), st["chi2"] if st else np.nan, st["ndf"] if st else -1,
                                   k in found, purity, o["pt"], o["eta"], o["pdg"], o["r"], o["d0"]))
-            # resolution sample
-            for k, t in pairs:
-                if not conv[k] or np.hypot(m["vx"][t], m["vy"][t]) > max_prod_r:
-                    continue
-                st = states[fidx[k]]
-                a["P"].append(st["par"]); a["S"].append(st["sig"])
-                a["Y"].append(truth_perigee(m["vx"][t], m["vy"][t], m["vz"][t], m["px"][t],
-                                            m["py"][t], m["pz"][t], m["q"][t], B))
-                a["PT"].append(float(np.hypot(m["px"][t], m["py"][t])))
         print(f"  {os.path.basename(fp)}: {a['n_cand']} candidates, {a['n_conv']} converged "
               f"(cumulative)", flush=True)
-    for k in ("P", "S", "Y", "PT"):
-        a[k] = np.asarray(a[k], np.float64)
 
 
 def failure_table(rows):
@@ -192,8 +207,9 @@ def slug(s):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--detector", required=True, choices=sorted(detectors.DETECTORS))
-    ap.add_argument("--chain", action="append", required=True, metavar="LABEL=GLOB",
-                    help="chain label and its fitted files (repeat; order = legend order)")
+    ap.add_argument("--chain", action="append", required=True, metavar="LABEL=GLOB[@CAND,FIT]",
+                    help="chain label and its fitted files (repeat; order = legend order); an "
+                         "optional @CAND,FIT overrides --candidates/--fitted for this chain")
     ap.add_argument("--candidates", default="MLTracks")
     ap.add_argument("--fitted", default="GenfitTracks")
     ap.add_argument("--baseline", default=None,
@@ -202,6 +218,9 @@ def main():
     ap.add_argument("--b-tesla", type=float, default=None, help="default: detectors.py")
     ap.add_argument("--max-prod-r", type=float, default=100.0,
                     help="resolution sample: owner production radius [mm]")
+    ap.add_argument("--classes", default="d0", choices=["d0", "origin"],
+                    help="prompt/displaced definition for the ROC: true |d0| thresholds, or the "
+                         "truth origin (metrics.origin_class: prompt vs b/c/tau decay)")
     ap.add_argument("--max-files", type=int, default=0, help="per chain; 0 = all")
     ap.add_argument("--tag", default="cld")
     ap.add_argument("--outdir", default=os.path.normpath(os.path.join(HERE, "..", "..", "..", "..",
@@ -216,19 +235,23 @@ def main():
     chains = []
     for c in args.chain:
         lab, pat = c.split("=", 1)
+        cand, fit = args.candidates, args.fitted
+        if "@" in pat:
+            pat, cols = pat.rsplit("@", 1)
+            cand, fit = cols.split(",")
         files = sorted(globlib.glob(pat))[:args.max_files or None]
         assert files, f"{lab}: no files match {pat}"
-        chains.append((lab, files))
+        chains.append((lab, files, cand, fit))
     acc = {}
-    for lab, files in chains:
-        print(f"[{lab}] {len(files)} files", flush=True)
+    for lab, files, cand, fit in chains:
+        print(f"[{lab}] {len(files)} files ({cand} -> {fit})", flush=True)
         acc[lab] = new_acc()
-        process(files, cfg, args.candidates, args.fitted, B, args.max_prod_r, acc[lab])
+        process(files, cfg, cand, fit, B, acc[lab])
     if base:
         lab0 = "baseline tracking"
         print(f"[{lab0}] {base} from the '{chains[0][0]}' files", flush=True)
         acc[lab0] = new_acc()
-        process(chains[0][1], cfg, base, base, B, args.max_prod_r, acc[lab0])
+        process(chains[0][1], cfg, base, base, B, acc[lab0])
     labels = list(acc)
     style = {l: (BASE_STYLE if l == "baseline tracking" else STYLE[j % len(STYLE)])
              for j, l in enumerate(labels)}
@@ -250,28 +273,92 @@ def main():
             pq.write_table(pa.table({c: pa.array(v) for c, v in zip(CAND_COLS, rows)}), p)
             lines += failure_table(a["rows"])
             lines.append(f"  per-candidate table -> {p}")
+    # ---------------- resolution views ----------------
+    # own: each chain's reconstructed particles (populations differ between chains).
+    # common: the particles every chain reconstructs, in the events every chain processed --
+    # identical truth for all chains, so differences are due to hit content and fit alone.
+    # absolute ROC: normalized to ALL true particles of a class in those events, so it folds
+    # in the finding + fit efficiency (the impact-parameter tagging view).
+    if args.classes == "d0":
+        is_sig = lambda p: abs(p["y"][0]) > DISPLACED_MIN
+        is_bkg = lambda p: abs(p["y"][0]) < PROMPT_MAX
+        sig_lab, bkg_lab = "displaced (true $|d_0| > 25\\,\\mu$m)", "prompt (true $|d_0| < 10\\,\\mu$m)"
+    else:
+        is_sig = lambda p: p["origin"] == "hf"
+        is_bkg = lambda p: p["origin"] == "prompt"
+        sig_lab, bkg_lab = "b/c/$\\tau$-decay tracks", "prompt tracks"
+    resok = lambda p: p["par"] is not None and p["r"] < args.max_prod_r
+
+    def arrays(ps):
+        return dict(P=np.array([p["par"] for p in ps]).reshape(-1, 5),
+                    S=np.array([p["sig"] for p in ps]).reshape(-1, 5),
+                    Y=np.array([p["y"] for p in ps]).reshape(-1, 5),
+                    PT=np.array([p["pt"] for p in ps]),
+                    sig=np.array([is_sig(p) for p in ps], bool), bkg=np.array([is_bkg(p) for p in ps], bool))
+
+    own = {l: arrays([p for p in acc[l]["parts"] if resok(p)]) for l in labels}
+    evs = set.intersection(*[{p["ev"] for p in acc[l]["parts"]} for l in labels])
+    rec = {l: {(p["ev"], p["t"]): p for p in acc[l]["parts"] if p["ev"] in evs and resok(p)}
+           for l in labels}
+    ckeys = sorted(set.intersection(*[set(r) for r in rec.values()]))
+    common = {l: arrays([rec[l][k] for k in ckeys]) for l in labels}
+    allp = {l: [p for p in acc[l]["parts"] if p["ev"] in evs] for l in labels}
+    cuts = np.r_[np.linspace(0, 12, 241), np.geomspace(12.5, 1e4, 120)]   # |d0/sigma| scan
+
+    def roc_conditional(d):
+        sg = np.abs(d["P"][:, 0]) / np.clip(d["S"][:, 0], 1e-12, None)
+        return ([(sg[d["bkg"]] > x).mean() if d["bkg"].any() else np.nan for x in cuts],
+                [(sg[d["sig"]] > x).mean() if d["sig"].any() else np.nan for x in cuts])
+
+    def roc_absolute(ps):
+        rs = lambda sel: np.array([abs(p["par"][0]) / max(p["sig"][0], 1e-12) if p["par"] is not None
+                                   else -1.0 for p in ps if sel(p)])
+        b, g = rs(is_bkg), rs(is_sig)
+        return ([(b > x).mean() if len(b) else np.nan for x in cuts],
+                [(g > x).mean() if len(g) else np.nan for x in cuts])
+
+    def eff_at(roc, mistag=0.01):
+        x, y = np.asarray(roc[0]), np.asarray(roc[1])        # x decreasing with the cut
+        ok = np.isfinite(x) & np.isfinite(y)
+        return float(np.interp(mistag, x[ok][::-1], y[ok][::-1])) if ok.sum() > 1 else np.nan
+
     rctr = np.sqrt(RES_EDGES[:-1] * RES_EDGES[1:])
-    rb = {l: [(acc[l]["PT"] >= RES_EDGES[j]) & (acc[l]["PT"] < RES_EDGES[j + 1])
-              for j in range(len(rctr))] for l in labels}
-    R, PU = {}, {}
+
+    def res_table(view, title):
+        rl = [l for l in labels if len(view[l]["PT"])]
+        out = [f"{title} -- resolution (sigma-eq) per true-pT bin: d0 [um] | z0 [um] | pT [%]   ("
+               + " / ".join(rl) + ")"]
+        for j in range(len(rctr)):
+            mk = {l: (view[l]["PT"] >= RES_EDGES[j]) & (view[l]["PT"] < RES_EDGES[j + 1]) for l in rl}
+            if not rl or min(mk[l].sum() for l in rl) < 30:
+                continue
+            r = {l: view[l]["P"][mk[l]] - view[l]["Y"][mk[l]] for l in rl}
+            fpt = lambda l: iqr_sigma(view[l]["P"][mk[l], 2] / view[l]["Y"][mk[l], 2] - 1, 30)
+            out.append(f"  {RES_EDGES[j]:>5}-{RES_EDGES[j+1]:<5} " + " | ".join(
+                "/".join(f"{v:7.2f}" for v in vals) for vals in (
+                    [1e3 * iqr_sigma(r[l][:, 0], 30) for l in rl],
+                    [1e3 * iqr_sigma(r[l][:, 3], 30) for l in rl], [100 * fpt(l) for l in rl])))
+        return out
+
+    lines.append(f"efficiency per truth origin (metrics.origin_class), {len(evs)} common events: "
+                 f"finding / chain [N]")
     for l in labels:
-        a = acc[l]
-        if not len(a["PT"]):
-            continue
-        r = a["P"] - a["Y"]; r[:, 1] = wrap(r[:, 1])
-        R[l], PU[l] = r, r / np.clip(a["S"], 1e-12, None)
-    rl = [l for l in labels if l in R]
-    lines.append("resolution (sigma-eq) per true-pT bin: d0 [um] | z0 [um] | pT [%]   (" +
-                 " / ".join(rl) + ")")
-    for j in range(len(rctr)):
-        if min(rb[l][j].sum() for l in rl) < 30:
-            continue
-        f = lambda l, col: iqr_sigma(R[l][rb[l][j], col], 30)
-        fpt = lambda l: iqr_sigma(acc[l]["P"][rb[l][j], 2] / acc[l]["Y"][rb[l][j], 2] - 1, 30)
-        lines.append(f"  {RES_EDGES[j]:>5}-{RES_EDGES[j+1]:<5} " +
-                     " | ".join("/".join(f"{v:7.2f}" for v in vals) for vals in (
-                         [1e3 * f(l, 0) for l in rl], [1e3 * f(l, 3) for l in rl],
-                         [100 * fpt(l) for l in rl])))
+        cells = []
+        for o in ORIGINS:
+            ps = [p for p in allp[l] if p["origin"] == o]
+            if ps:
+                cells.append(f"{o} {np.mean([p['found'] for p in ps]):.3f}/"
+                             f"{np.mean([p['par'] is not None for p in ps]):.3f} [{len(ps)}]")
+        lines.append(f"  {l:28s} " + "  ".join(cells))
+    lines += res_table(own, "own sample")
+    lines.append(f"common sample: {len(ckeys)} particles reconstructed by all of "
+                 f"{', '.join(labels)}, in {len(evs)} common events")
+    lines += res_table(common, "common sample")
+    lines.append(f"ROC ({args.classes} classes: {sig_lab} vs {bkg_lab}) -- signal efficiency at "
+                 f"1% background: own / common / absolute")
+    for l in labels:
+        lines.append(f"  {l:28s} {eff_at(roc_conditional(own[l])):.3f} / "
+                     f"{eff_at(roc_conditional(common[l])):.3f} / {eff_at(roc_absolute(allp[l])):.3f}")
     txt = "\n".join(lines)
     print(txt)
     with open(os.path.join(args.outdir, f"fitted_{args.tag}.txt"), "w") as fh:
@@ -304,51 +391,73 @@ def main():
     fig.tight_layout()
     fig.savefig(os.path.join(args.outdir, f"fitted_eff_{args.tag}.pdf")); plt.close(fig)
 
+    def res_row(axes_row, view):
+        rl = [l for l in labels if len(view[l]["PT"])]
+        for ax, col, lab in [(axes_row[0], 0, "$d_0$ resolution [$\\mu$m]"),
+                             (axes_row[1], 3, "$z_0$ resolution [$\\mu$m]"),
+                             (axes_row[2], 2, "$p_T$ resolution [%]")]:
+            for l in rl:
+                d = view[l]
+                v = 100 * (d["P"][:, 2] / d["Y"][:, 2] - 1) if col == 2 else 1e3 * (d["P"][:, col] - d["Y"][:, col])
+                ys = [iqr_sigma(v[(d["PT"] >= RES_EDGES[j]) & (d["PT"] < RES_EDGES[j + 1])], 30)
+                      for j in range(len(rctr))]
+                ax.plot(rctr, ys, style[l][1], color=style[l][0], label=l)
+            ax.set_xscale("log"); ax.set_yscale("log")
+            ax.set_xlabel("true $p_T$ [GeV]", fontsize=FS); ax.set_ylabel(lab, fontsize=FS)
+            ax.legend(fontsize=FS - 3); ax.grid(alpha=0.3, which="both")
+
+    def pull_panel(ax, view):
+        for l in labels:
+            d = view[l]
+            if not len(d["PT"]):
+                continue
+            pu = (d["P"][:, 0] - d["Y"][:, 0]) / np.clip(d["S"][:, 0], 1e-12, None)
+            ax.plot(rctr, [iqr_sigma(pu[(d["PT"] >= RES_EDGES[j]) & (d["PT"] < RES_EDGES[j + 1])], 30)
+                           for j in range(len(rctr))], style[l][1], color=style[l][0], label=l)
+        ax.axhline(1, color="k", ls=":")
+        ax.set_xscale("log"); ax.set_xlabel("true $p_T$ [GeV]", fontsize=FS)
+        ax.set_ylabel("$d_0$ pull width (1 = honest)", fontsize=FS)
+        ax.legend(fontsize=FS - 3); ax.grid(alpha=0.3)
+
+    def roc_panel(ax, rocs, title):
+        for l, (x, y) in rocs.items():
+            ax.plot(x, y, "-", color=style[l][0], label=l)
+        ax.set_xscale("log"); ax.set_xlim(1e-4, 1); ax.set_ylim(0, 1.02)
+        ax.set_xlabel(f"mistag rate, {bkg_lab}", fontsize=FS - 2)
+        ax.set_ylabel(f"efficiency, {sig_lab}", fontsize=FS - 2)
+        ax.set_title(title, fontsize=FS - 1); ax.legend(fontsize=FS - 4); ax.grid(alpha=0.3)
+
     fig, axes = plt.subplots(2, 3, figsize=(17, 9.5))
-    res = lambda l, v: [iqr_sigma(v[mk], 30) for mk in rb[l]]
-    for ax, vf, lab in [(axes[0, 0], lambda l: 1e3 * R[l][:, 0], "$d_0$ resolution [$\\mu$m]"),
-                        (axes[0, 1], lambda l: 1e3 * R[l][:, 3], "$z_0$ resolution [$\\mu$m]"),
-                        (axes[0, 2], lambda l: 100 * (acc[l]["P"][:, 2] / acc[l]["Y"][:, 2] - 1),
-                         "$p_T$ resolution [%]")]:
-        for l in rl:
-            ax.plot(rctr, res(l, vf(l)), style[l][1], color=style[l][0], label=l)
-        ax.set_xscale("log"); ax.set_yscale("log")
-        ax.set_xlabel("true $p_T$ [GeV]", fontsize=FS); ax.set_ylabel(lab, fontsize=FS)
-        ax.legend(fontsize=FS - 3); ax.grid(alpha=0.3, which="both")
-    ax = axes[1, 0]
-    for l in rl:
-        ax.plot(rctr, res(l, PU[l][:, 0]), style[l][1], color=style[l][0], label=l)
-    ax.axhline(1, color="k", ls=":")
-    ax.set_xscale("log"); ax.set_xlabel("true $p_T$ [GeV]", fontsize=FS)
-    ax.set_ylabel("$d_0$ pull width (1 = honest)", fontsize=FS)
-    ax.legend(fontsize=FS - 3); ax.grid(alpha=0.3)
+    res_row(axes[0], own)
+    pull_panel(axes[1, 0], own)
     ax = axes[1, 1]
-    for l in rl:
-        a = acc[l]
-        prompt = np.abs(a["Y"][:, 0]) < PROMPT_MAX
-        sig = a["P"][:, 0] / np.clip(a["S"][:, 0], 1e-12, None)
-        ax.hist(sig[prompt], bins=np.linspace(-15, 15, 91), histtype="step", lw=1.5,
-                density=True, color=style[l][0], label=l)
+    for l in labels:
+        d = own[l]
+        if d["bkg"].any():
+            ax.hist((d["P"][:, 0] / np.clip(d["S"][:, 0], 1e-12, None))[d["bkg"]],
+                    bins=np.linspace(-15, 15, 91), histtype="step", lw=1.5, density=True,
+                    color=style[l][0], label=l)
     ax.set_yscale("log"); ax.set_ylim(1e-4, 1)
-    ax.set_xlabel("$d_0/\\sigma(d_0)$, prompt tracks", fontsize=FS)
+    ax.set_xlabel(f"$d_0/\\sigma(d_0)$, {bkg_lab}", fontsize=FS - 1)
     ax.legend(fontsize=FS - 4)
-    ax = axes[1, 2]
-    for l in rl:
-        a = acc[l]
-        prompt = np.abs(a["Y"][:, 0]) < PROMPT_MAX
-        displ = np.abs(a["Y"][:, 0]) > DISPLACED_MIN
-        sig = np.abs(a["P"][:, 0]) / np.clip(a["S"][:, 0], 1e-12, None)
-        cuts = np.linspace(0, 12, 200)
-        ax.plot([(sig[prompt] > x).mean() for x in cuts], [(sig[displ] > x).mean() for x in cuts],
-                "-", color=style[l][0], label=l)
-    ax.set_xscale("log"); ax.set_xlim(1e-3, 1)
-    ax.set_xlabel("prompt mistag rate", fontsize=FS)
-    ax.set_ylabel("displaced-track efficiency", fontsize=FS)
-    ax.legend(fontsize=FS - 3); ax.grid(alpha=0.3)
+    roc_panel(axes[1, 2], {l: roc_conditional(own[l]) for l in labels}, "own sample")
+    fig.suptitle(f"[T] + Genfit, {args.tag.upper()}: each chain's own reconstructed particles",
+                 fontsize=FS)
     fig.tight_layout()
     fig.savefig(os.path.join(args.outdir, f"fitted_res_{args.tag}.pdf")); plt.close(fig)
-    print(f"wrote {args.outdir}/fitted_eff_{args.tag}.pdf, fitted_res_{args.tag}.pdf, "
-          f"fitted_{args.tag}.txt")
+
+    fig, axes = plt.subplots(2, 3, figsize=(17, 9.5))
+    res_row(axes[0], common)
+    pull_panel(axes[1, 0], common)
+    roc_panel(axes[1, 1], {l: roc_conditional(common[l]) for l in labels},
+              "common sample (same particles)")
+    roc_panel(axes[1, 2], {l: roc_absolute(allp[l]) for l in labels},
+              "absolute (all true particles of the class)")
+    fig.suptitle(f"[T] + Genfit, {args.tag.upper()}: {len(ckeys)} particles reconstructed by every "
+                 f"chain", fontsize=FS)
+    fig.tight_layout()
+    fig.savefig(os.path.join(args.outdir, f"fitted_common_{args.tag}.pdf")); plt.close(fig)
+    print(f"wrote {args.outdir}/fitted_{{eff,res,common}}_{args.tag}.pdf, fitted_{args.tag}.txt")
 
 
 if __name__ == "__main__":
