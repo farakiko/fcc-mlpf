@@ -46,7 +46,7 @@ all a study needs (ECAL's is built from the scint hits; a crystal's Cherenkov hi
 **[PF] prerequisites / baselines:**
 - `TracksFromGenParticles` (+`TracksFromGenParticlesAssociation`): smeared truth tracks WITH
   an `AtCalorimeter` state — the stand-in track input for [PF] linking development, and the
-  interface our tier-1/2 fitters will eventually replace.
+  interface the Genfit-fitted ML tracks will eventually replace.
 - `TopoGrownClusters` (+`EcalClusterMCParticleLinks`): classical ECAL clustering — the [C]
   baseline. NOT in the production default (hangs upstream, see Status); produce on the eval
   subset with the original `run_digi_reco.py` once fixed.

@@ -27,20 +27,35 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   (Kalman/DAF, material + B field from DD4hep, finder-agnostic, detector-generic) is THE
   fitter. It runs as a batch `k4run` pass between the frozen [T] model and [PF]; [PF] trains
   on cached Genfit-fitted track parameters merged into the parquets. The earlier in-loop
-  analytic helix fit ("tier 1") and the learned calibration head ("tier 1b") are RETIRED:
-  `pipeline/pretrain/tracking/{fit.py,tier1b.py,tier1b_vs_kf.py,fit_values_vs_kf.py}` and the
-  fit hooks in `eval.py`/`train.py`/`data.py` are slated for removal (pending: the refactor
-  commit after the 2026-10-13 study; the validation studies that justified the decision are
-  in git history and in `plots/trk_fit/`). Evaluation should migrate to a single analysis on
-  Genfit output: efficiency, fake rate (binned by Genfit pT), resolutions, pulls.
+  analytic helix fit ("tier 1") and the learned calibration head ("tier 1b") are REMOVED
+  from the code entirely (2026-10-15; user: "dangerous because misleading" — never
+  reintroduce a fitter-free/helix pT anywhere, not even as a plot axis); the studies that
+  justified the decision are in git history and in `plots/trk_fit/`.
+- **Evaluation = two levels, one set of definitions** (user, 2026-10-15). `metrics.py` holds
+  THE truth selection, DM matching and fitter-free truth reference, imported by train.py,
+  eval.py and genfit/analyze_fitted.py. (a) `eval.py`, finding level, NO fit: eff vs true pT
+  (+ prompt/displaced), inclusive fake rate, per detector; cheap enough for every checkpoint
+  (finetuning scans). (b) `genfit/analyze_fitted.py`, fitted level: chain eff (found AND
+  converged), fake rate among converged tracks vs Genfit pT, fit-failure table, resolutions,
+  pulls, d0-significance ROC; any number of chains + baseline. Converged = chi2 >= 0, ndf > 0,
+  AtIP state (GenfitTrackFitter writes failed fits as chi2 = ndf = -1, it does not drop them).
+- **B field is never hardcoded** (user, 2026-10-15): data path reads the parquet metadata
+  `B_tesla`; the EDM4hep side takes `b_tesla` from `genfit/detectors.py` (overridable).
+  pT = 2.99792458e-4 * B * R (exact constant, `metrics.C_LIGHT`; the old code used 0.3).
 - **Why not the helix fit**: measured on CLD vs the Kalman on identical hits — momentum and
   angles equivalent, but d0 2x and z0 3-4x worse at low pT (material treatment is
   architectural, not learnable post hoc: the "+1b" curve lies on the uncorrected one), and
   the d0-significance ROC favors the KF decisively (80% vs 60% displaced eff at 1% mistag).
-- **Genfit chain portability is a known gap** (user flagged 2026-10-13): the export side
-  (`genfit/export_infer.py`, `write_mltracks.py`) is CLD-shaped. Required: per-detector config
-  (adapter, role→collection map, geometry XML, wire-collection name) behind a `--detector
-  cld|idea` flag. IDEA is Genfit's home turf (A. De Vita's integration); crib his steering.
+- **Genfit chain is detector-flagged** (2026-10-15): every step takes `--detector cld|idea`;
+  ALL detector facts live in `genfit/detectors.py` (collections, hit-row provenance rule,
+  geometry, B, wire-tracker name, baseline collection). Provenance = how hit row j (the
+  adapter's order, what the model saw) maps back to its podio hit object: CLD rows = digi
+  collections in role order (podio order inside); IDEA rows follow the LINK collections
+  (DCH first: link i <-> digi i; then VTXD, VTXB, SiWrD, SiWrB: link.getFrom()). IDEA step A
+  reads the canonical chunk (1:1 with its digi file) because its adapter needs podio; step B
+  replays the rows and asserts the per-row roles equal step A's. Upstream IDEA steering
+  (k4RecTracker test/testTrackFitter) = our CLD settings + IDEA geometry; the fitter takes
+  TrackerHitPlane + SenseWireHit hits only (TrackerHit3D would be skipped).
 - **Model**: TrackFormer (HEPTv2-style, arXiv:2606.20437) — transformer encoder (full attn;
   `--attn lsh` fallback for large events) + slot decoder, d=128, 1.4M params; losses:
   Hungarian focal + Dice + slot-BCE + background-BCE + InfoNCE. 34-dim detector-blind
@@ -52,10 +67,12 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   (single dataset) or `--test-frac 0.1` (mixed; per-glob, because a global sort would hold
   out only the alphabetically first dataset). No third split for now; "val" = this test set.
 - **Metric**: double-majority (purity>0.5 AND completeness>0.5, >=3 hits) efficiency + fake
-  rate; fakes are defined by hit-truth association only. Curve names (user convention):
+  rate; fakes are defined by hit-truth association only. DM is used EVERYWHERE, including the
+  fitted-level resolution sample (user, 2026-10-15; replaces the 10-13 study's purity-only
+  matching + >=4 hits, so resolution numbers shift slightly vs those slides). Curve names (user convention):
   "baseline tracking" (conformal+KF), "single-detector training", "mixed-detector training".
 
-## Status (2026-10-13)
+## Status (2026-10-15)
 
 - **Datasets** (canonical parquet, `postprocessing/` schema v0.2): CLD tt̄ 365 GeV, 89,260
   events (447 chunks); IDEA (o1, De Vita) Z→qq̄ 91 GeV, 75,000 events (150 chunks); both on
@@ -95,18 +112,34 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   (purity-only) + ≥4 labeled hits + owner prod radius < 100 mm (vertex detector ends at
   57 mm) + converged fit with an AtIP state; truth reference = analytic helix from the MC
   production point transported to the beamline PCA (`truth_perigee`, ours, fitter-free).
-- **Known-good fixes in train.py/data.py** (2026-10-13, may be uncommitted — check git):
-  test-shard subsample shuffled (else the in-training monitor silently covers only the
+- **Fit-failure caveat (found 2026-10-15)**: the 8.8% came from `why_fits_fail.py`, which
+  called a candidate converged if ANY fitted track shared its hits. Upstream GenfitTrackFitter
+  keeps failed tracks (with their hits) at chi2 = ndf = -1, so that criterion can undercount
+  failures. Rerun `analyze_fitted.py` on the study's fitted files before quoting the number.
+- **Genfit-only refactor (2026-10-15)**: helix fit + tier-1b + validate_fit removed;
+  fitted_chain_vs_baseline.py + why_fits_fail.py merged into genfit/analyze_fitted.py;
+  overlay_evals.py moved to tracking/; run_genfit_cld.py -> run_genfit.py. Validated LOCALLY
+  on CLD REC files (scratch venv, no key4hep): step-A labels bit-identical to the old chain;
+  eval.py efficiency counts identical to the old eval; analyze_fitted's finding eff on REC
+  files == eval.py's baseline eff on the same events (0.6595). NOT yet run: steps B-C (podio/
+  k4run) and anything IDEA — needs the cluster.
+- **Known-good fixes in train.py/data.py** (2026-10-13, committed): test-shard subsample shuffled (else the in-training monitor silently covers only the
   alphabetically first dataset — bit the first mixed run: no IDEA numbers tracked);
   per-detector val loss (`val_loss_det`) recorded per epoch; shard-cache keys are
   dataset-dir-prefixed (chunk basenames collide across datasets).
 
 ## Roadmap (user, 2026-10-13 — the plan for the next sessions, in order)
 
-1. **Genfit-only refactor** (prerequisite hygiene): remove helix-fit/tier-1b modules, unify
-   evaluation on Genfit output (eff/fake binned by Genfit pT; kills the "provisional
-   helix-fit" plot disclaimers), `--detector cld|idea` flag for the chain, port the study
-   driver's per-file parallelization into the scripts, condor wrapper for the corpus pass.
+1. **Genfit-only refactor** (prerequisite hygiene). DONE 2026-10-15: helix-fit removal,
+   two-level evaluation, `--detector` flag. REMAINING: smoke tests on the cluster (CLD
+   steps B-C; full IDEA chain incl. SenseWireHit type check), output slimming
+   (`outputCommands`), port the study driver's per-file parallelization
+   (/shared/scratch-genfit-test/run_study_v3.sh) into the scripts, condor wrapper.
+1b. **Fit-failure study** (user, 2026-10-15): why do ~9% of ML candidates not converge —
+   soft? loopers? hard? which particles? how many hits? Compare the INPUT-FEATURE
+   distributions of failed vs converged candidates on the fitted tt̄ events (delegate to an
+   agent). Inputs: `analyze_fitted.py`'s candidates_<tag>_<chain>.parquet (file, event,
+   cand, fit status, purity, owner truth) joined to the per-hit features of each candidate.
 2. **Scale up the [T] mixed dataset**: remaining 100 IDEA chunks (→75k ev; gate: validate
    `--attn lsh` at scale first — epoch cost) and/or rebalance the 90:10 track mix.
 3. **[T] IDEA-only training** (setup 2 of 3; Andrea may have one — coordinate, don't
@@ -145,8 +178,10 @@ directory; this file supersedes it.
 
 ## Working rules (user)
 
-- **Git: the user does ALL `git add`/`git commit` himself.** Never stage or commit. Tell him
-  what is uncommitted and suggest a message.
+- **Git (user, 2026-10-15): Claude STAGES (`git add`) finished work, NEVER commits or
+  pushes.** Stage only the files of the finished step, then notify the user with the staged
+  list + a suggested commit message; he reviews, commits and pushes. Avoid `git mv` while an
+  earlier step is still staged-but-uncommitted (it mixes the two commits).
 - Work in baby steps: one script + a few slide-ready plots per step; no scope explosion.
 - `plots/` is gitignored (results live locally / in talks); testdata/ too.
 - This repo stays **compute-agnostic**: no cluster/batch-system specifics in any file here;
@@ -168,8 +203,11 @@ directory; this file supersedes it.
   `production/cld/campaigns/`. `validation/audit_edm4hep.py` = executable data spec.
 - `postprocessing/` EDM4hep → canonical parquet (schema v0.2, `schema.py` audits); condor
   striping in `postprocessing/condor/`; every derived dataset carries a SOURCE.txt.
-- `pipeline/pretrain/tracking/` [T]: `data.py` (features/shards), `model.py`, `train.py`,
-  `eval.py`, `plot_features.py`, `genfit/` (production fitting chain + study scripts).
+- `pipeline/pretrain/tracking/` [T]: `data.py` (features/shards), `model.py` (+ the hit-
+  assignment rule `TrackFormer.assign`, `load_checkpoint`), `metrics.py` (shared definitions),
+  `train.py`, `eval.py`, `overlay_evals.py`, `plot_features.py`; `genfit/`: `detectors.py`
+  (per-detector config), `export_infer.py` (A), `write_mltracks.py` (B), `run_genfit.py` (C),
+  `states_to_parquet.py` (D), `analyze_fitted.py` (E), `edm4hep_io.py` (uproot readers).
 - Pinned stacks: CLD = key4hep 2026-04-08; IDEA + Genfit = nightly 2026-10-04 (nightlies get
   garbage-collected; re-pin deliberately and record in provenance).
 
@@ -186,3 +224,7 @@ directory; this file supersedes it.
   (capitalized); covMatrix branch is `covMatrix.values[21]`; AtIP location == 1.
 - `nohup` launched through a non-interactive remote shell: redirect stdin too (`</dev/null`)
   or the remote call never returns.
+- `postprocessing/cld.py::read_file` SKIPS events without tracker hits; each returned event
+  carries its source entry as `e["event"]` — key anything per-event by that, not by position.
+- The old eval.py pooled all detectors of its inputs into one curve (a CLD+IDEA input
+  diluted the CLD baseline efficiency with IDEA particles); eval.py is per detector now.

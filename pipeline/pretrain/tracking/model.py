@@ -101,3 +101,21 @@ class TrackFormer(nn.Module):
         z = F.normalize(H, dim=1)                             # for InfoNCE
         bg = self.h_bg(H).squeeze(1)                          # background logit
         return act, A, z, bg
+
+    @torch.no_grad()
+    def assign(self, x, etaphi, thr=0.5):
+        """Per-hit track-slot id (-1 = background): a hit joins its highest-probability
+        slot among the active ones (activity > thr) if that probability exceeds thr. The ONE
+        decision rule (in-training monitor, eval.py, genfit/export_infer.py)."""
+        act, A, _, _ = self(x, etaphi)
+        P = torch.sigmoid(A); P[torch.sigmoid(act) <= thr] = 0.0
+        return np.where((P.max(0).values > thr).cpu().numpy(), P.argmax(0).cpu().numpy(), -1)
+
+
+def load_checkpoint(path, dev):
+    """best.pt / last.pt -> TrackFormer in eval mode (architecture from the saved args)."""
+    ck = torch.load(path, map_location=dev, weights_only=False)
+    a = ck["args"]
+    model = TrackFormer(d=a["dim"], slots=a["slots"], attn=a["attn"], block=a["block"]).to(dev)
+    model.load_state_dict(ck["state_dict"]); model.eval()
+    return model

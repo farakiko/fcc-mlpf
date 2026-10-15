@@ -31,6 +31,7 @@ from scipy.optimize import linear_sum_assignment
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import build_cache, build_shards, load_shard
+from metrics import dm_match, track_sets
 from model import TrackFormer
 
 W_CLS, W_ASSIGN, W_DICE, W_BG, W_NCE = 0.1, 200.0, 2.0, 1.8, 12.0
@@ -100,66 +101,26 @@ def event_loss(model, ev, dev):
 
 
 # ------------------------------------------------------------------ DM eval
-def _tracks(lab, min_hits=3):
-    d = {}
-    for i, t in enumerate(lab):
-        if t >= 0:
-            d.setdefault(int(t), set()).add(i)
-    return {t: h for t, h in d.items() if len(h) >= min_hits}
-
-
-def _dm(recos, gts):
-    matched, fakes, pairs = set(), 0, []
-    for s, hits in recos.items():
-        ok = [t for t, g in gts.items()
-              if len(hits & g) / len(hits) > 0.5 and len(hits & g) / len(g) > 0.5]
-        if ok:
-            matched.add(ok[0])
-            pairs.append((s, ok[0]))
-        else:
-            fakes += 1
-    return (len(gts), len(matched), len(recos), fakes), pairs
-
-
 @torch.no_grad()
-def evaluate(model, evs, dev, thr=0.5, fit_pt=False):
+def evaluate(model, evs, dev, thr=0.5):
     """-> {detector: (model_eff, model_fake, base_eff|None, base_fake|None, n_gt)}
-    fit_pt=True additionally runs the tier-1 helix fit (fit.py) on every DM-matched
-    found track and returns {detector: rel_pt_residuals} as a second dict."""
-    acc, res = {}, {}
+    Finding level only (metrics.dm_match); fitted quantities come from the Genfit chain."""
+    acc = {}
     for ev in evs:
-        d = ev["detector"]
-        s = acc.setdefault(d, np.zeros(8))
-        x = torch.from_numpy(ev["x"]).to(dev)
-        act, A, _, _ = model(x, torch.from_numpy(ev["etaphi"]).to(dev))
-        P = torch.sigmoid(A); P[torch.sigmoid(act) <= thr] = 0.0
-        pred = np.where((P.max(0).values > thr).cpu().numpy(), P.argmax(0).cpu().numpy(), -1)
-        gts = _tracks(ev["y"], 1)
-        recos = _tracks(pred)
-        counts, pairs = _dm(recos, gts)
-        s[:4] += counts
+        s = acc.setdefault(ev["detector"], np.zeros(8))
+        pred = model.assign(torch.from_numpy(ev["x"]).to(dev),
+                            torch.from_numpy(ev["etaphi"]).to(dev), thr)
+        gts = track_sets(ev["y"], 1)
+        s[:4] += dm_match(track_sets(pred), gts)[0]
         if "base_y" in ev:
-            s[4:8] += _dm(_tracks(ev["base_y"]), gts)[0]
-        if fit_pt:
-            from fit import fit_helix
-            for slot, t in pairs:
-                hr = sorted(recos[slot])
-                if len(hr) < 4:
-                    continue
-                xyz = ev["fit_xyz"][hr]
-                w = torch.from_numpy(1.0 / ev["fit_sig"][hr] ** 2)
-                try:
-                    r = fit_helix(torch.from_numpy(xyz[:, :2]), torch.from_numpy(xyz[:, 2]), w, w)
-                except Exception:
-                    continue
-                res.setdefault(d, []).append(float(r["pt"]) / ev["track_pt"][t] - 1.0)
+            s[4:8] += dm_match(track_sets(ev["base_y"]), gts)[0]
     out = {}
     for d, s in acc.items():
         me, mf = s[1] / max(s[0], 1), s[3] / max(s[2], 1)
         be = s[5] / max(s[4], 1) if s[4] else None
         bf = s[7] / max(s[6], 1) if s[4] else None
         out[d] = (me, mf, be, bf, int(s[0]))
-    return (out, res) if fit_pt else out
+    return out
 
 
 def _loss_curve(metrics_path, out_pdf):
@@ -372,14 +333,6 @@ def main():
             _loss_curve(metrics_path, os.path.join(args.outdir, "loss_curve.pdf"))
             _mirror(args.outdir, args.mirror)
         print(line, flush=True)
-    # final pass with the tier-1 helix fit on matched found tracks: fitted-pT resolution
-    model.eval()
-    _, fres = evaluate(model, eval_sub, dev, fit_pt=True)
-    for d, rr in sorted(fres.items()):
-        rr = np.array(rr)
-        q = np.percentile(rr, [25, 50, 75])
-        print(f"fitted-pT ({d}, {len(rr)} matched tracks): median {q[1]:+.4f}  "
-              f"sigma-eq {(q[2]-q[0])/1.349:.4f}", flush=True)
     print(("CHECK PASSED: losses finite, both-detector eval ran" if args.check
            else f"best mean DM eff {best:.3f} -> {args.outdir}/best.pt"), flush=True)
 

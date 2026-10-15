@@ -1,17 +1,21 @@
 """
-[T] evaluation: trained checkpoint vs the classical baseline (CLD: conformal tracking),
-on held-out canonical parquet chunks.
+[T] finding-level evaluation: trained checkpoint vs the classical baseline (CLD: conformal
+tracking), on held-out canonical parquet chunks. No track fit is involved anywhere: the
+efficiency is binned in TRUE pT, and the fake rate is inclusive (a fake has no truth
+particle, so any pT axis for it must come from a fit -- that lives in the Genfit-level
+analysis, genfit/analyze_fitted.py).
 
-Produces (into --outdir):
-  eval_tracking.pdf  -- DM efficiency vs truth pT (model + baseline), fake fraction vs pT,
-                        tier-1 fitted-pT resolution vs pT (model + baseline hit sets)
-  summary.txt        -- the headline numbers
+Produces (into --outdir), one set PER DETECTOR present in the inputs:
+  eval_tracking_<det>.pdf  -- DM efficiency vs true pT (model + baseline); prompt
+                              (true |d0| < 10 um) vs displaced (> 25 um) efficiency
+  eval_binned_<det>.npz    -- binned counts for cross-run overlays (overlay_evals.py)
+  summary.txt              -- the headline numbers, all detectors
 
 Usage:
   python eval.py --ckpt runs/t_cld90k/best.pt \
       --inputs '<derived>/cld_ttbar/chunk_0000*.parquet' '<...>/chunk_0001*.parquet' \
-      --shard-cache /fast/disk/shards_cld --outdir runs/t_cld90k
-Hit-set conventions match train.py's DM eval; fits use fit.py (tier 1).
+      --shard-cache /fast/disk/shards_cld --outdir runs/t_cld90k/eval
+Matching and selection: metrics.py (identical to the in-training monitor).
 """
 import argparse
 import glob as globlib
@@ -23,23 +27,92 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import build_cache, build_shards, load_shard
-from fit import fit_helix
-from model import TrackFormer
-from train import _dm, _tracks
+from metrics import dm_match, track_sets
+from model import load_checkpoint
 
 EDGES = np.array([0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100])
 CTR = np.sqrt(EDGES[:-1] * EDGES[1:])
+PROMPT_MAX, DISPLACED_MIN = 0.010, 0.025          # true |d0| [mm]
 
 
-def fit_pt(ev, hits):
-    hr = sorted(hits)
-    xyz = ev["fit_xyz"][hr]
-    w = torch.from_numpy(1.0 / ev["fit_sig"][hr] ** 2)
-    try:
-        r = fit_helix(torch.from_numpy(xyz[:, :2].copy()), torch.from_numpy(xyz[:, 2].copy()), w, w)
-        return float(r["pt"])
-    except Exception:
-        return None
+def new_acc():
+    nb = len(CTR)
+    a = {k: np.zeros(nb) for k in ("gt_tot", "gt_m", "gt_b", "gt_tot_p", "gt_m_p", "gt_b_p",
+                                   "gt_tot_d", "gt_m_d", "gt_b_d")}
+    a.update(n_rec_m=0, n_fake_m=0, n_rec_b=0, n_fake_b=0, n_ev=0, has_base=False)
+    return a
+
+
+def accumulate(a, ev, pred):
+    gts = track_sets(ev["y"], 1)
+    td0 = ev.get("track_d0")                      # absent in shards built before 2026-10-13
+    for t in gts:
+        bi = np.searchsorted(EDGES, ev["track_pt"][t]) - 1
+        if not 0 <= bi < len(CTR):
+            continue
+        a["gt_tot"][bi] += 1
+        if td0 is not None:
+            a["gt_tot_p"][bi] += abs(td0[t]) < PROMPT_MAX
+            a["gt_tot_d"][bi] += abs(td0[t]) > DISPLACED_MIN
+    for finder, s in ((pred, "m"), (ev.get("base_y"), "b")):
+        if finder is None:
+            continue
+        a["has_base"] |= s == "b"
+        (_, _, nrec, nfake), pairs = dm_match(track_sets(np.asarray(finder, np.int64)), gts)
+        a[f"n_rec_{s}"] += nrec; a[f"n_fake_{s}"] += nfake
+        for _, t in pairs:
+            bi = np.searchsorted(EDGES, ev["track_pt"][t]) - 1
+            if not 0 <= bi < len(CTR):
+                continue
+            a[f"gt_{s}"][bi] += 1
+            if td0 is not None:
+                a[f"gt_{s}_p"][bi] += abs(td0[t]) < PROMPT_MAX
+                a[f"gt_{s}_d"][bi] += abs(td0[t]) > DISPLACED_MIN
+    a["n_ev"] += 1
+
+
+def summarize(det, a):
+    eff = lambda k: a[k].sum() / max(a["gt_tot"].sum(), 1)
+    lines = [f"[{det}] {a['n_ev']} events, {int(a['gt_tot'].sum())} truth tracks | "
+             f"model eff {eff('gt_m'):.4f} fake {a['n_fake_m'] / max(a['n_rec_m'], 1):.4f}"
+             + (f" | baseline eff {eff('gt_b'):.4f} fake {a['n_fake_b'] / max(a['n_rec_b'], 1):.4f}"
+                if a["has_base"] else "")]
+    for j in range(len(CTR)):
+        n = a["gt_tot"][j]
+        if n < 20:
+            continue
+        lines.append(f"  pT {EDGES[j]:>5}-{EDGES[j+1]:<5}  n={int(n):6d}  eff model {a['gt_m'][j]/n:.3f}"
+                     + (f" base {a['gt_b'][j]/n:.3f}" if a["has_base"] else ""))
+    return lines
+
+
+def plot(det, a, out_pdf):
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fm = a["n_fake_m"] / max(a["n_rec_m"], 1)
+    fb = a["n_fake_b"] / max(a["n_rec_b"], 1)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+    ok = a["gt_tot"] > 20
+    axes[0].plot(CTR[ok], (a["gt_m"] / np.maximum(a["gt_tot"], 1))[ok], "o-",
+                 label=f"ML tracking (fake rate {fm:.3f})")
+    if a["has_base"]:
+        axes[0].plot(CTR[ok], (a["gt_b"] / np.maximum(a["gt_tot"], 1))[ok], "s--",
+                     label=f"baseline tracking (fake rate {fb:.3f})")
+    axes[0].set_ylabel("DM efficiency")
+    for suf, ls, lab in (("p", "-", "prompt"), ("d", ":", "displaced")):
+        okc = a[f"gt_tot_{suf}"] > 20
+        r = lambda s: (a[f"gt_{s}_{suf}"] / np.maximum(a[f"gt_tot_{suf}"], 1))[okc]
+        axes[1].plot(CTR[okc], r("m"), "o" + ls, color="tab:blue", label=f"ML tracking, {lab}")
+        if a["has_base"]:
+            axes[1].plot(CTR[okc], r("b"), "s" + ls, color="tab:orange",
+                         label=f"baseline tracking, {lab}")
+    axes[1].set_ylabel("DM efficiency (prompt: true $|d_0|<10\\,\\mu$m; displaced: $>25\\,\\mu$m)",
+                       fontsize=9)
+    for ax in axes:
+        ax.set_xscale("log"); ax.set_xlabel("true $p_T$ [GeV]"); ax.set_ylim(0, 1.05)
+        ax.legend(fontsize=9); ax.grid(alpha=0.3)
+    fig.suptitle(f"[T] track finding, {det}")
+    fig.tight_layout(); fig.savefig(out_pdf); plt.close(fig)
 
 
 def main():
@@ -55,148 +128,33 @@ def main():
 
     dev = torch.device("cuda" if torch.cuda.is_available() else
                        "mps" if torch.backends.mps.is_available() else "cpu")
-    ck = torch.load(args.ckpt, map_location=dev, weights_only=False)
-    a = ck["args"]
-    model = TrackFormer(d=a["dim"], slots=a["slots"], attn=a["attn"], block=a["block"]).to(dev)
-    model.load_state_dict(ck["state_dict"]); model.eval()
+    model = load_checkpoint(args.ckpt, dev)
 
     files = sorted(sum([globlib.glob(p) if any(c in p for c in "*?[") else [p]
                         for p in args.inputs], []))
     assert files, f"no inputs match {args.inputs}"
-    if args.shard_cache:
-        shards, _ = build_shards(files, args.shard_cache)
-    else:
-        shards = [build_cache(files, "")]
+    shards = build_shards(files, args.shard_cache)[0] if args.shard_cache else [build_cache(files, "")]
 
-    nb = len(CTR)
-    gt_tot = np.zeros(nb); gt_m = np.zeros(nb); gt_b = np.zeros(nb)   # eff vs truth pT
-    # prompt (true |d0| < 10 um) / displaced (> 25 um) split of the efficiency
-    gt_tot_p = np.zeros(nb); gt_m_p = np.zeros(nb); gt_b_p = np.zeros(nb)
-    gt_tot_d = np.zeros(nb); gt_m_d = np.zeros(nb); gt_b_d = np.zeros(nb)
-    fk_m = np.zeros(nb); rec_m = np.zeros(nb)                         # model fake frac vs fitted pT
-    fk_b = np.zeros(nb); rec_b = np.zeros(nb)
-    res_m, res_b = [[] for _ in range(nb)], [[] for _ in range(nb)]   # fitted-pT residuals
-    n_ev = 0
+    acc, n_ev = {}, 0
+    for sp in shards:
+        for ev in (sp if not args.shard_cache else load_shard(sp)):
+            if args.max_events and n_ev >= args.max_events:
+                break
+            n_ev += 1
+            pred = model.assign(torch.from_numpy(ev["x"]).to(dev),
+                                torch.from_numpy(ev["etaphi"]).to(dev), args.thr)
+            accumulate(acc.setdefault(ev["detector"], new_acc()), ev, pred)
 
-    with torch.no_grad():
-        for sp in shards:
-            evs = sp if not args.shard_cache else load_shard(sp)
-            for ev in evs:
-                if args.max_events and n_ev >= args.max_events:
-                    break
-                n_ev += 1
-                x = torch.from_numpy(ev["x"]).to(dev)
-                act, A, _, _ = model(x, torch.from_numpy(ev["etaphi"]).to(dev))
-                P = torch.sigmoid(A); P[torch.sigmoid(act) <= args.thr] = 0.0
-                pred = np.where((P.max(0).values > args.thr).cpu().numpy(),
-                                P.argmax(0).cpu().numpy(), -1)
-                gts = _tracks(ev["y"], 1)
-                td0 = ev.get("track_d0")
-
-                def cls(t):
-                    if td0 is None:
-                        return None
-                    a = abs(float(td0[t]))
-                    return "p" if a < 0.010 else ("d" if a > 0.025 else None)
-
-                for finder, (fk, rec, resv, gtm, gtm_p, gtm_d) in [
-                        (np.asarray(pred), (fk_m, rec_m, res_m, gt_m, gt_m_p, gt_m_d)),
-                        (ev.get("base_y"), (fk_b, rec_b, res_b, gt_b, gt_b_p, gt_b_d))]:
-                    if finder is None:
-                        continue
-                    recos = _tracks(finder.astype(np.int64))
-                    _, pairs = _dm(recos, gts)
-                    matched_gt = {t for _, t in pairs}
-                    matched_reco = {s for s, _ in pairs}
-                    for t in gts:
-                        bi = np.searchsorted(EDGES, ev["track_pt"][t]) - 1
-                        if 0 <= bi < nb and t in matched_gt:
-                            gtm[bi] += 1
-                            c_ = cls(t)
-                            if c_ == "p":
-                                gtm_p[bi] += 1
-                            elif c_ == "d":
-                                gtm_d[bi] += 1
-                    for s, hits in recos.items():
-                        if len(hits) < 4:
-                            continue
-                        pt = fit_pt(ev, hits)
-                        if pt is None:
-                            continue
-                        bi = np.searchsorted(EDGES, pt) - 1
-                        if not 0 <= bi < nb:
-                            continue
-                        rec[bi] += 1
-                        if s not in matched_reco:
-                            fk[bi] += 1
-                    for s, t in pairs:
-                        pt = fit_pt(ev, recos[s])
-                        tpt = ev["track_pt"][t]
-                        bi = np.searchsorted(EDGES, tpt) - 1
-                        if pt is not None and 0 <= bi < nb:
-                            resv[bi].append(pt / tpt - 1.0)
-                for t in gts:
-                    bi = np.searchsorted(EDGES, ev["track_pt"][t]) - 1
-                    if 0 <= bi < nb:
-                        gt_tot[bi] += 1
-                        c_ = cls(t)
-                        if c_ == "p":
-                            gt_tot_p[bi] += 1
-                        elif c_ == "d":
-                            gt_tot_d[bi] += 1
-
-    def iqr(x):
-        if len(x) < 20:
-            return np.nan
-        q = np.percentile(x, [25, 75])
-        return (q[1] - q[0]) / 1.349
-
-    # ---- summary ----
-    lines = [f"eval: {n_ev} events, ckpt {args.ckpt}",
-             f"truth tracks {int(gt_tot.sum())} | model eff {gt_m.sum()/max(gt_tot.sum(),1):.4f} "
-             f"fake {fk_m.sum()/max(rec_m.sum(),1):.4f} | baseline eff {gt_b.sum()/max(gt_tot.sum(),1):.4f} "
-             f"fake {fk_b.sum()/max(rec_b.sum(),1):.4f}"]
-    for j in range(nb):
-        if gt_tot[j] < 20:
-            continue
-        lines.append(f"  pT {EDGES[j]:>5}-{EDGES[j+1]:<5}  n={int(gt_tot[j]):6d}  "
-                     f"eff model {gt_m[j]/gt_tot[j]:.3f} base {gt_b[j]/gt_tot[j]:.3f}   "
-                     f"pT-res model {100*iqr(res_m[j]):5.2f}% base {100*iqr(res_b[j]):5.2f}%")
+    lines = [f"eval: {n_ev} events, ckpt {args.ckpt}"]
+    for det, a in sorted(acc.items()):
+        lines += summarize(det, a)
+        np.savez(os.path.join(args.outdir, f"eval_binned_{det}.npz"), edges=EDGES, detector=det, **a)
+        plot(det, a, os.path.join(args.outdir, f"eval_tracking_{det}.pdf"))
     txt = "\n".join(lines)
     print(txt)
     with open(os.path.join(args.outdir, "summary.txt"), "w") as f:
         f.write(txt + "\n")
-    # binned arrays for cross-run overlay plots (see genfit/overlay_evals.py)
-    np.savez(os.path.join(args.outdir, "eval_binned.npz"),
-             edges=EDGES, gt_tot=gt_tot, gt_m=gt_m, gt_b=gt_b,
-             fk_m=fk_m, rec_m=rec_m, fk_b=fk_b, rec_b=rec_b, n_ev=n_ev,
-             gt_tot_p=gt_tot_p, gt_m_p=gt_m_p, gt_b_p=gt_b_p,
-             gt_tot_d=gt_tot_d, gt_m_d=gt_m_d, gt_b_d=gt_b_d)
-
-    # ---- plots ----
-    import matplotlib; matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
-    ok = gt_tot > 20
-    axes[0].plot(CTR[ok], (gt_m / np.maximum(gt_tot, 1))[ok], "o-", label="HEPTv2")
-    axes[0].plot(CTR[ok], (gt_b / np.maximum(gt_tot, 1))[ok], "s--", label="conformal")
-    axes[0].set_ylabel("DM efficiency"); axes[0].set_ylim(0, 1.05)
-    okm = rec_m > 20; okb = rec_b > 20
-    axes[1].plot(CTR[okm], (fk_m / np.maximum(rec_m, 1))[okm], "o-", label="HEPTv2")
-    axes[1].plot(CTR[okb], (fk_b / np.maximum(rec_b, 1))[okb], "s--", label="conformal")
-    axes[1].set_ylabel("fake fraction (vs fitted $p_T$)"); axes[1].set_yscale("log")
-    axes[1].text(0.03, 0.04, "binning: provisional helix-fit $p_T$ (not Genfit)",
-                 transform=axes[1].transAxes, fontsize=9, color="0.35")
-    axes[2].plot(CTR, [100 * iqr(r) for r in res_m], "o-", label="HEPTv2")
-    axes[2].plot(CTR, [100 * iqr(r) for r in res_b], "s--", label="conformal")
-    axes[2].set_ylabel("fitted-$p_T$ resolution [%]"); axes[2].set_yscale("log")
-    axes[2].text(0.03, 0.04, "provisional helix fit (not Genfit)",
-                 transform=axes[2].transAxes, fontsize=9, color="0.35")
-    for ax in axes:
-        ax.set_xscale("log"); ax.set_xlabel("$p_T$ [GeV]"); ax.legend(); ax.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(os.path.join(args.outdir, "eval_tracking.pdf"))
-    print(f"wrote {args.outdir}/eval_tracking.pdf, summary.txt")
+    print(f"wrote {args.outdir}/eval_tracking_<det>.pdf, eval_binned_<det>.npz, summary.txt")
 
 
 if __name__ == "__main__":

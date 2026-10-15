@@ -104,16 +104,23 @@ transfer. Per-feature distribution plots (CLD vs IDEA, publication style) are pr
 
 ## Evaluation
 
-Finding-level (no fitting involved): `eval.py` scores a checkpoint on held-out chunks with
-the double-majority criterion (a truth particle is found if a track owns >50% of its hits
-and contains >50% of them; a track is fake if no particle majority-owns its hits), reporting
-efficiency and fake rate versus pT, with the classical baseline evaluated identically where
-the files carry one (CLD: conformal tracking). Binned arrays are saved to `eval_binned.npz`;
-`genfit/overlay_evals.py` overlays two trainings and the baseline on one figure.
+Evaluation runs at two levels that share one implementation of the definitions
+(`metrics.py`: truth selection, double-majority matching, truth reference). A truth
+particle (charged, pT > 0.1 GeV, ≥3 hits) is found if a track holds more than 50% of its
+hits and more than 50% of the track's hits are its own; a track matching no particle is a
+fake. The in-training monitor uses the same code.
 
-Fitted-level: the Genfit chain in `genfit/` fits the model's candidates and
-`genfit/fitted_chain_vs_baseline.py` compares resolutions, pulls and the d0-significance
-discrimination of up to two ML chains against the baseline tracking, judged by MC truth.
+- **Finding level, no fit** — `eval.py` scores a checkpoint on held-out chunks, per
+  detector: efficiency versus true pT (inclusive, and split into prompt, true |d0| < 10 µm,
+  and displaced, > 25 µm), and the inclusive fake rate, with the classical baseline
+  evaluated identically where the files carry one (CLD: conformal tracking). A fake has no
+  truth particle, so a fake rate versus pT requires a fitted pT and belongs to the next
+  level. Binned counts are saved to `eval_binned_<det>.npz`; `overlay_evals.py` overlays
+  several trainings and the baseline. This level is cheap enough to run on every checkpoint.
+- **Fitted level, Genfit** — the chain in `genfit/` fits the candidates, and
+  `genfit/analyze_fitted.py` reports the chain efficiency (found and fit converged), the
+  fake rate versus Genfit pT, the fit-failure rate, resolutions, pulls and the
+  d0-significance discrimination of any number of ML chains against the baseline tracking.
 
 ## Results (2026-10-13; details and figures in the talk material)
 
@@ -133,9 +140,11 @@ CLD-only model on CLD itself; the improvement persists at an equal number of opt
 updates. Known caveats: one seed per configuration, and a CLD-dominated track mix (≈90:10);
 the planned controls are a duplicate-data run and a fine-tuning scan on IDEA sample size.
 
-## Deprecated modules
+## Track fitting
 
-`fit.py` (analytic helix fit), `tier1b.py`, `tier1b_vs_kf.py`, `fit_values_vs_kf.py` and the
-fit hooks in `eval.py`/`train.py` are retired in favor of Genfit2-only fitting and are slated
-for removal; the studies that motivated the decision (fitter-vs-Kalman resolution and
-covariance comparisons on identical hit sets) live in the git history of these files.
+Track parameters come exclusively from Genfit2 (`genfit/README.md`). An analytic helix fit
+and a learned covariance calibration were evaluated against the CLD Kalman fit on identical
+hit sets in 2026-10 and removed: momentum and angles were equivalent, but d0 and z0 were
+2–4 times worse at low pT, a consequence of fitting without material treatment that no post
+hoc correction recovered. The study code is in the git history (removed in the 2026-10-15
+refactor).

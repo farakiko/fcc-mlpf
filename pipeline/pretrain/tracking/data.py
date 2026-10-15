@@ -2,9 +2,11 @@
 [T] data layer: canonical parquet (postprocessing/README.md) -> training events.
 Detector-blind: everything needed is in the schema columns + file metadata.
 
-Each event -> dict(x[N,F], etaphi[N,3], y[N], K, track_pt[K], detector, base_y[N]?).
-Labels: truth selection = charged, pT > pt_cut, >= min_hits hits (applied per event);
-non-selected particles' hits -> -1 (background class for the aux losses).
+Each event -> dict(x[N,F], etaphi[N,3], y[N], K, track_pt[K], track_d0[K], detector,
+base_y[N]?). Labels: truth selection = charged, pT > pt_cut, >= min_hits hits (applied per
+event); non-selected particles' hits -> -1 (background class for the aux losses).
+track_d0 = true transverse impact parameter (metrics.truth_perigee, with the file's B_tesla),
+used only by the evaluation's prompt/displaced split.
 
 Features (F = 34, modality-aware; zeros where a field doesn't apply):
   pos/1000 (3), r/1000, sin/cos phi, eta/3, log-eDep,
@@ -13,13 +15,23 @@ Features (F = 34, modality-aware; zeros where a field doesn't apply):
   nclusters/30, modality, role one-hot (9)
 """
 import os
+import sys
 
 import numpy as np
 import pyarrow.parquet as pq
 import torch
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from metrics import truth_perigee, truth_selection
+
 NROLE = 9
 NFEAT = 25 + NROLE
+# canonical columns read by featurize() -- keep in sync with it
+FEAT_COLS = ["thit_x", "thit_y", "thit_z", "thit_role", "thit_modality", "thit_edep",
+             "thit_du", "thit_dv", "thit_dw", "thit_drift", "thit_drift_err",
+             "thit_alongwire_err", "thit_wire_stereo", "thit_wire_azim",
+             "thit_left_x", "thit_left_y", "thit_left_z",
+             "thit_right_x", "thit_right_y", "thit_right_z", "thit_nclusters"]
 
 
 def featurize(c):
@@ -55,16 +67,12 @@ def load_parquet(path, pt_cut=0.1, min_hits=3):
     t = pq.read_table(path)
     md = {k.decode(): v.decode() for k, v in (t.schema.metadata or {}).items()}
     det = md.get("detector", "unknown")
+    B = float(md["B_tesla"])                 # schema-required (postprocessing/schema.py)
     has_base = "bhit_track" in t.column_names
     # [T] reads ONLY its columns -- files may also carry calo/other stage groups (parquet is
-    # columnar; unselected groups cost nothing). Keep this list in sync with featurize().
-    NEED = ["thit_x", "thit_y", "thit_z", "thit_role", "thit_modality", "thit_edep",
-            "thit_du", "thit_dv", "thit_dw", "thit_drift", "thit_drift_err",
-            "thit_alongwire_err", "thit_wire_stereo", "thit_wire_azim",
-            "thit_left_x", "thit_left_y", "thit_left_z",
-            "thit_right_x", "thit_right_y", "thit_right_z",
-            "thit_nclusters", "thit_mc",
-            "mc_px", "mc_py", "mc_charge", "mc_vx", "mc_vy"] + (["bhit_track"] if has_base else [])
+    # columnar; unselected groups cost nothing).
+    NEED = FEAT_COLS + ["thit_mc", "mc_px", "mc_py", "mc_pz", "mc_charge", "mc_vx", "mc_vy",
+                        "mc_vz"] + (["bhit_track"] if has_base else [])
     cols = [c for c in NEED if c in t.column_names]
     events = []
     for i in range(t.num_rows):
@@ -72,36 +80,18 @@ def load_parquet(path, pt_cut=0.1, min_hits=3):
         if len(c["thit_x"]) == 0:
             continue
         x, etaphi = featurize(c)
-        # truth selection on the mc block
         y_mc = c["thit_mc"]
-        u, cnt = np.unique(y_mc[y_mc >= 0], return_counts=True)
-        pt = np.hypot(c["mc_px"][u], c["mc_py"][u])
-        keep = u[(cnt >= min_hits) & (np.abs(c["mc_charge"][u]) > 0) & (pt > pt_cut)]
+        keep = truth_selection(y_mc, c["mc_px"], c["mc_py"], c["mc_charge"], pt_cut, min_hits)
         remap = {int(k): j for j, k in enumerate(keep)}
         yl = np.array([remap.get(int(t_), -1) for t_ in y_mc], dtype=np.int64)
         allpt = np.hypot(c["mc_px"], c["mc_py"])
-        # raw coords + per-hit sigma for the tier-1 helix fit (fit.py) at eval time.
-        # v0: isotropic sigma from the silicon plane errors; wire hits get drift_err
-        # (their xyz is the WIRE point -- DCH fitting is a known v0 caveat, see README).
-        sig = np.sqrt((c["thit_du"] ** 2 + c["thit_dv"] ** 2) / 2.0)
-        if "thit_drift_err" in c:
-            wire = c["thit_modality"] > 0.5
-            sig = np.where(wire, c["thit_drift_err"], sig)
-        # true transverse impact parameter per kept truth track (analytic helix through the
-        # production vertex, transported to the beamline PCA; B = 2 T for both detectors)
         kk = keep.astype(int)
-        ptk = np.clip(allpt[kk], 1e-6, None)
-        R = ptk * 1e3 / (0.3 * 2.0)
-        phiv = np.arctan2(c["mc_py"][kk], c["mc_px"][kk])
-        srot = -np.sign(c["mc_charge"][kk])
-        cx = c["mc_vx"][kk] - srot * R * np.sin(phiv)
-        cy = c["mc_vy"][kk] + srot * R * np.cos(phiv)
-        track_d0 = srot * (np.hypot(cx, cy) - R)
+        track_d0 = truth_perigee(c["mc_vx"][kk], c["mc_vy"][kk], c["mc_vz"][kk],
+                                 c["mc_px"][kk], c["mc_py"][kk], c["mc_pz"][kk],
+                                 c["mc_charge"][kk], B)[0]
         ev = dict(x=x, etaphi=etaphi, y=yl, K=len(keep),
                   track_pt=np.array([allpt[int(k)] for k in keep], np.float32),
-                  track_d0=track_d0.astype(np.float32),
-                  fit_xyz=np.stack([c["thit_x"], c["thit_y"], c["thit_z"]], 1).astype(np.float64),
-                  fit_sig=np.clip(sig, 1e-3, None).astype(np.float64),
+                  track_d0=np.asarray(track_d0, np.float32),
                   detector=det)
         if has_base:
             ev["base_y"] = c["bhit_track"].astype(np.int64)

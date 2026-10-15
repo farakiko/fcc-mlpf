@@ -44,6 +44,8 @@ def collection_ids(f):
 
 
 def read_file(fp):
+    """-> list of canonical event dicts; events without tracker hits are skipped, so each
+    dict carries its source entry number as e["event"] (not a schema column)."""
     f = uproot.open(fp)
     t = f["events"]
     name2id = collection_ids(f)
@@ -148,6 +150,7 @@ def read_file(fp):
             if a < T and w > bw[a]:
                 bw[a] = w; bm[a] = c
         e["btrack_mc"] = bm
+        e["event"] = i
         events.append(e)
     return events
 
