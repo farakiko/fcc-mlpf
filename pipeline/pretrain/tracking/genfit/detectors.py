@@ -23,7 +23,9 @@ import os
 DETECTORS = {
     "cld": dict(
         name="CLD_o2_v08",
-        geometry="FCCee/CLD/compact/CLD_o2_v08/CLD_o2_v08.xml",     # relative to $K4GEO
+        # the vendored production geometry the samples were simulated with (differs from
+        # the 2026-10-04 nightly k4geo copy only in the top-level version attribute)
+        geometry="repo:production/cld/CLD_o2_v08/CLD_o2_v08.xml",
         b_tesla=2.0,                                # compact XML: SolenoidField = 2*tesla
         hits=[
             (0, "VXDTrackerHits",       "VXDTrackerHitRelations",          "collection"),
@@ -39,8 +41,9 @@ DETECTORS = {
     ),
     "idea": dict(
         name="IDEA_o1_v4",
-        geometry="FCCee/IDEA/compact/IDEA_o1_v04/IDEA_o1_v04.xml",  # = production/idea/utils
-        b_tesla=2.0,
+        # $K4GEO of the pinned nightly; the production stack (2026-09-10) is garbage-collected
+        geometry="FCCee/IDEA/compact/IDEA_o1_v04/IDEA_o1_v04.xml",
+        b_tesla=2.0,                                # DectDimensions: SolenoidField = 2*tesla
         hits=[                                      # process_tree.py: drift hits, then planar
             (6, "DCH_DigiCollection", "DCH_DigiSimAssociationCollection", "parallel"),
             (1, None, "VTXDSimDigiLinks",  "from"),
@@ -51,7 +54,7 @@ DETECTORS = {
         # the IDEA adapter needs podio (key4hep env), so step A reads the canonical chunk,
         # which idea_digi_to_parquet.sh produces 1:1 from one digi file, all events in order
         step_a_input="canonical",
-        wire_tracker="DCH_v2",                      # GenfitTrackFitter.WireTrackerName
+        wire_tracker="DCH_v2",                      # DriftChamber_o1_v02.xml detector name
         baseline_tracks=None,                       # no classical baseline in these files
     ),
 }
@@ -63,7 +66,13 @@ def get(det):
     return DETECTORS[det]
 
 
+REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".."))
+
+
 def geometry_path(cfg):
+    """'repo:<path>' = relative to the fcc-mlpf checkout; otherwise relative to $K4GEO."""
+    if cfg["geometry"].startswith("repo:"):
+        return os.path.join(REPO, cfg["geometry"][len("repo:"):])
     k4geo = os.environ.get("K4GEO", "")
     if not k4geo:
         raise SystemExit("$K4GEO is not set: source the key4hep setup, or pass --geometry")

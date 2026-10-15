@@ -112,17 +112,32 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   (purity-only) + ≥4 labeled hits + owner prod radius < 100 mm (vertex detector ends at
   57 mm) + converged fit with an AtIP state; truth reference = analytic helix from the MC
   production point transported to the beamline PCA (`truth_perigee`, ours, fitter-free).
-- **Fit-failure caveat (found 2026-10-15)**: the 8.8% came from `why_fits_fail.py`, which
-  called a candidate converged if ANY fitted track shared its hits. Upstream GenfitTrackFitter
-  keeps failed tracks (with their hits) at chi2 = ndf = -1, so that criterion can undercount
-  failures. Rerun `analyze_fitted.py` on the study's fitted files before quoting the number.
+- **Fit failures, re-measured 2026-10-15** with analyze_fitted.py (chi2/ndf criterion) on the
+  study's fitted files: 8.8% (2954/33661, single) and 9.2% (1552/16952, mixed) — the old
+  hit-overlap number stands. Failed fits appear in the output as chi2 = ndf = -1 tracks (one
+  output per input, in order, confirmed on the 2026-10-04 nightly). Failure-mode study
+  (inputs: plots/trk_fit/v4/out_e1/candidates_*.parquet + candidate_hits_*.parquet; script
+  genfit/fit_failure_study.py) in progress.
+- **Cross-chain comparison caveat (found 2026-10-15)**: resolutions and the d0-significance
+  ROC are computed on each chain's OWN matched sample, so chains with different efficiencies
+  are compared on different populations. Under DM matching the baseline now looks better at
+  0.2-1 GeV in d0 (62 vs 73 um at 0.2-0.5) and its ROC lies above the ML chains — the ML
+  chains find many more (harder, displaced) tracks. The 10-13 statement "ROC equivalent,
+  resolutions equal-or-better" must not be quoted until the comparison is redone on the
+  particles ALL chains reconstruct (planned analyze_fitted option). pT resolution and the
+  d0 pull widths (ML ~0.9-1.0, baseline up to 1.8 at high pT) favor the ML chains in the
+  current comparison, subject to the same caveat.
 - **Genfit-only refactor (2026-10-15)**: helix fit + tier-1b + validate_fit removed;
   fitted_chain_vs_baseline.py + why_fits_fail.py merged into genfit/analyze_fitted.py;
   overlay_evals.py moved to tracking/; run_genfit_cld.py -> run_genfit.py. Validated LOCALLY
   on CLD REC files (scratch venv, no key4hep): step-A labels bit-identical to the old chain;
   eval.py efficiency counts identical to the old eval; analyze_fitted's finding eff on REC
-  files == eval.py's baseline eff on the same events (0.6595). NOT yet run: steps B-C (podio/
-  k4run) and anything IDEA — needs the cluster.
+  files == eval.py's baseline eff on the same events (0.6595). ON THE CLUSTER (2026-10-15,
+  /shared/scratch-genfit-test/v4/): CLD steps A-C bit-identical to the old chain (labels,
+  MLTracks, 516 Genfit states with zero difference); IDEA full chain A-E runs (10 events:
+  88% converge, chain eff 0.69, fake 3%, pT res 0.1-0.3%) — first Genfit fits of ML tracks
+  with drift-chamber hits. Fitter geometry: CLD = vendored production copy (repo:), IDEA =
+  nightly K4GEO IDEA_o1_v04 (WireTrackerName DCH_v2; SolenoidField 2 T).
 - **Known-good fixes in train.py/data.py** (2026-10-13, committed): test-shard subsample shuffled (else the in-training monitor silently covers only the
   alphabetically first dataset — bit the first mixed run: no IDEA numbers tracked);
   per-detector val loss (`val_loss_det`) recorded per epoch; shard-cache keys are
@@ -131,10 +146,11 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
 ## Roadmap (user, 2026-10-13 — the plan for the next sessions, in order)
 
 1. **Genfit-only refactor** (prerequisite hygiene). DONE 2026-10-15: helix-fit removal,
-   two-level evaluation, `--detector` flag. REMAINING: smoke tests on the cluster (CLD
-   steps B-C; full IDEA chain incl. SenseWireHit type check), output slimming
-   (`outputCommands`), port the study driver's per-file parallelization
-   (/shared/scratch-genfit-test/run_study_v3.sh) into the scripts, condor wrapper.
+   two-level evaluation, `--detector` flag, cluster smoke tests (CLD identical to the old
+   chain; IDEA end-to-end). REMAINING: common-sample comparison option in analyze_fitted
+   (see caveat above), output slimming (`outputCommands`), port the study driver's per-file
+   parallelization (/shared/scratch-genfit-test/run_study_v3.sh: xargs -P over files for
+   steps A/B, one k4run over a comma list) into the scripts, condor wrapper.
 1b. **Fit-failure study** (user, 2026-10-15): why do ~9% of ML candidates not converge —
    soft? loopers? hard? which particles? how many hits? Compare the INPUT-FEATURE
    distributions of failed vs converged candidates on the fitted tt̄ events (delegate to an

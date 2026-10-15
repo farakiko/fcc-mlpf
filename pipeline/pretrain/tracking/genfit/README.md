@@ -77,7 +77,11 @@ double majority. In addition:
   impure candidates, so this rate is below the finding-level fake rate of `../eval.py`.
 - **resolution sample**: found, converged, dominant particle produced at r < 100 mm; the
   truth reference is the analytic helix from the MC production point transported to the
-  beamline (`metrics.truth_perigee`, fitter-free).
+  beamline (`metrics.truth_perigee`, fitter-free). Each chain's resolutions and ROC are
+  computed on its OWN matched sample: chains with different efficiencies are compared on
+  different particle populations (a chain that also finds harder, more displaced tracks is
+  penalized for it). A comparison restricted to the particles all chains reconstruct is
+  the planned remedy.
 
 Outputs: `fitted_eff_<tag>.pdf`, `fitted_res_<tag>.pdf`, `fitted_<tag>.txt` (including a
 fit-failure table by candidate class), and per chain `candidates_<tag>_<chain>.parquet` with
@@ -88,29 +92,34 @@ fit-failure studies.
 
 - CLD (2026-10-13): refitting the conformal tracks of a production file, 125/125 fits
   converged; the fitted AtIP states agree with the stored CLD Kalman states to five
-  significant digits in curvature and tanλ. ML candidates of the trained models: 91%
-  converge under the earlier hit-overlap criterion; the failures are dominated by sub-GeV
-  tracks. Step E applies the stricter chi2/ndf criterion and should be rerun on those files.
-- The 2026-10-15 refactor (per-detector configuration, step E) was validated locally on CLD
-  REC files for steps A and E (labels identical to the previous chain; finding efficiency
-  identical to `../eval.py` on the same events). Steps B and C, and the whole IDEA chain,
-  await a smoke test in the key4hep environment.
+  significant digits in curvature and tanλ.
+- CLD, current chain (2026-10-15), two held-out tt̄ files, mixed-detector checkpoint: step A
+  labels, step B track hit sets and step C fitted states are identical to the 2026-10-13
+  chain (516 converged fits, zero difference; the same 54 failures). Re-analysis of the
+  2026-10-13 fitted samples with step E: fit failures 8.8% (2954 of 33661 candidates,
+  single-detector training) and 9.2% (mixed), unchanged under the chi2/ndf criterion;
+  81% of the failures come from candidates whose dominant particle has pT < 1 GeV.
+- IDEA (2026-10-15), held-out chunk 0 ↔ its digi file, mixed-detector checkpoint, 10
+  events: the full chain runs (drift-chamber hits are `edm4hep::SenseWireHit`, planar hits
+  `TrackerHitPlane`; the replayed hit order matched step A in all 500 events of step B).
+  199 candidates, 88% converge; chain efficiency 0.69 (finding 0.78); fake rate among
+  converged tracks 3%; pT resolution 0.1–0.3% between 0.5 and 5 GeV.
 
 ## Configuration notes
 
 - Do **not** set `ListOfTypesToSkip=[0]` (present in the k4RecTracker reference steering):
   it is a GGTF convention marking unmatched tracks with type 0, and freshly created track
   collections carry the default type 0 — every track would be skipped.
-- IDEA: `WireTrackerName = "DCH_v2"` (the fitter's default) and the IDEA_o1_v04 geometry,
-  from `detectors.py`. The drift-chamber hits must be `edm4hep::SenseWireHit` for the fitter
-  to use them; to be confirmed on the IDEA digi files at the first smoke test.
+- Geometry: the fit must use the geometry the sample was simulated with. CLD defaults to the
+  vendored production copy (`production/cld/CLD_o2_v08/`); IDEA to IDEA_o1_v04 of the pinned
+  nightly (the 2026-09-10 production stack is no longer on cvmfs). IDEA additionally sets
+  `WireTrackerName = "DCH_v2"`, the drift-chamber name in that geometry.
 - Genfit passes are I/O-dominated, not fit-dominated (~20 ms/track for the DAF itself, but
   the full event content is copied through ROOT I/O): batch many input files per `k4run`
   launch, and do not extrapolate costs from few-event tests.
 
 ## TODO
 
-- [ ] smoke test of steps B–C on CLD and of the full chain on IDEA (key4hep nightly).
 - [ ] output slimming (`outputCommands`) and parallel per-file export (done in the study
       driver; port into the scripts), then a condor wrapper for the full-corpus pass.
 - [ ] merge step D output into the canonical training parquets as the [PF] track-input block.
