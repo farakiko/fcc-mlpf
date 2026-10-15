@@ -64,7 +64,7 @@ def load_parquet(path, pt_cut=0.1, min_hits=3):
             "thit_left_x", "thit_left_y", "thit_left_z",
             "thit_right_x", "thit_right_y", "thit_right_z",
             "thit_nclusters", "thit_mc",
-            "mc_px", "mc_py", "mc_charge"] + (["bhit_track"] if has_base else [])
+            "mc_px", "mc_py", "mc_charge", "mc_vx", "mc_vy"] + (["bhit_track"] if has_base else [])
     cols = [c for c in NEED if c in t.column_names]
     events = []
     for i in range(t.num_rows):
@@ -87,8 +87,19 @@ def load_parquet(path, pt_cut=0.1, min_hits=3):
         if "thit_drift_err" in c:
             wire = c["thit_modality"] > 0.5
             sig = np.where(wire, c["thit_drift_err"], sig)
+        # true transverse impact parameter per kept truth track (analytic helix through the
+        # production vertex, transported to the beamline PCA; B = 2 T for both detectors)
+        kk = keep.astype(int)
+        ptk = np.clip(allpt[kk], 1e-6, None)
+        R = ptk * 1e3 / (0.3 * 2.0)
+        phiv = np.arctan2(c["mc_py"][kk], c["mc_px"][kk])
+        srot = -np.sign(c["mc_charge"][kk])
+        cx = c["mc_vx"][kk] - srot * R * np.sin(phiv)
+        cy = c["mc_vy"][kk] + srot * R * np.cos(phiv)
+        track_d0 = srot * (np.hypot(cx, cy) - R)
         ev = dict(x=x, etaphi=etaphi, y=yl, K=len(keep),
                   track_pt=np.array([allpt[int(k)] for k in keep], np.float32),
+                  track_d0=track_d0.astype(np.float32),
                   fit_xyz=np.stack([c["thit_x"], c["thit_y"], c["thit_z"]], 1).astype(np.float64),
                   fit_sig=np.clip(sig, 1e-3, None).astype(np.float64),
                   detector=det)
@@ -131,8 +142,11 @@ def build_shards(parquets, shard_dir, pt_cut=0.1, min_hits=3):
         mp = os.path.join(shard_dir, key + ".json")
         if not (os.path.exists(sp) and os.path.exists(mp)):
             evs = load_parquet(p, pt_cut=pt_cut, min_hits=min_hits)
-            torch.save(evs, sp + ".tmp")
-            os.replace(sp + ".tmp", sp)
+            # per-process tmp name: concurrent builders of the same shard must not share a
+            # tmp file (os.replace is atomic; identical content, last writer wins)
+            tmp = f"{sp}.tmp{os.getpid()}"
+            torch.save(evs, tmp)
+            os.replace(tmp, sp)
             with open(mp, "w") as f:
                 json.dump({"n": len(evs), "kmax": max((e["K"] for e in evs), default=0),
                            "detectors": sorted(set(e["detector"] for e in evs))}, f)

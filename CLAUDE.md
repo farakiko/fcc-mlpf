@@ -61,6 +61,13 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   events (447 chunks); IDEA (o1, De Vita) Z→qq̄ 91 GeV, 75,000 events (150 chunks); both on
   the owner's EOS under `fcc-mlpf/data/derived/`. Track-count mix of the first mixed
   training: ~90:10 CLD:IDEA (hits ~47:53 — IDEA has ~100 hits/track in the drift chamber).
+- **CLD corpus scaled 12x (2026-10-14)**: five new CLD_o2_v08 samples at √s = 40/91/160/240/
+  365 GeV (external production, B.; tracker sim hits kept, calo sim dropped), converted via
+  `batch_convert.py` → `cld_{40,91,160,240,365}gev/` next to `cld_ttbar` (same 200-ev chunks,
+  same val convention). **1,060,400 events**, 5,302 chunks, 44 GB, 0 audit failures.
+  Occupancy ladder: 257→676 hits/ev and 17→48 truth tracks/ev from 40→365 GeV; labeled-hit
+  fraction 0.83 at every energy. Purpose: large diverse CLD-only benchmark training
+  (user, 2026-10-14) before/alongside the mixed-scaling roadmap item.
 - **Trainings done**: (1) single-detector (CLD 80,260 ev, 20 ep): full-test eff 0.767 /
   fakes 0.063 vs baseline tracking 0.639 / 0.156 — better in every pT bin except 50–100 GeV.
   (2) mixed (CLD + first 50 IDEA chunks = 22,500 ev, same hyperparameters): CLD subsample
@@ -77,25 +84,64 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   `ListOfTypesToSkip=[0]` (GGTF convention; fresh collections have type 0 → all skipped).
 - **Surviving caveats on the mixed result**: single seed per configuration; the "any extra
   diverse data" alternative (CLD-duplicates control would discriminate); CLD-dominant mix.
+- **2026-10-13 study artifacts** (local `plots/trk_fit/`, gitignored): overlay_eval_{cld,idea}.pdf
+  (+ `_split.pdf`: prompt vs displaced efficiency — the displaced panel shows the ML trackers
+  +15–20 points over baseline ON THE PLATEAU, the HF headline), ml_vs_baseline_fitted.pdf
+  (Genfit-level: ML resolutions equal-or-better, pulls more honest, ROC equivalent),
+  fit_failures.pdf (+ genfit/why_fits_fail.py: the 8.8% DAF failures are 81% genuine sub-GeV
+  tracks, 0.9% failure above 1 GeV — soft-track DAF tuning is a question for Andrea),
+  loss_curves_single_vs_mixed.pdf, input_feat/ (27 feature PDFs). Matched-sample composition:
+  ~70% prompt / 27% displaced (>25 µm), identical across chains. Matching = hit-majority
+  (purity-only) + ≥4 labeled hits + owner prod radius < 100 mm (vertex detector ends at
+  57 mm) + converged fit with an AtIP state; truth reference = analytic helix from the MC
+  production point transported to the beamline PCA (`truth_perigee`, ours, fitter-free).
 - **Known-good fixes in train.py/data.py** (2026-10-13, may be uncommitted — check git):
   test-shard subsample shuffled (else the in-training monitor silently covers only the
   alphabetically first dataset — bit the first mixed run: no IDEA numbers tracked);
   per-detector val loss (`val_loss_det`) recorded per epoch; shard-cache keys are
   dataset-dir-prefixed (chunk basenames collide across datasets).
 
-## Pending queue (ordered; user-approved)
+## Roadmap (user, 2026-10-13 — the plan for the next sessions, in order)
 
-1. Finish/fetch the 2026-10-13 study deliverables: eval overlays (CLD 3-curve, IDEA 2-curve,
-   `genfit/overlay_evals.py`) + fitted-level 3-chain figure (`genfit/fitted_chain_vs_baseline.py`).
-2. **Genfit-only refactor**: remove helix-fit/tier-1b modules, unify evaluation on Genfit
-   output, `--detector` flag for the chain, per-file parallelization (done in the study
-   driver; port it into the scripts), condor wrapper for the full-corpus pass.
-3. IDEA Genfit chain (needs 2; then the IDEA fitted-level plots — note: no baseline there).
-4. Finetuning-curve study (pinned): performance on IDEA vs # IDEA events (zero-shot →
-   few-shot → full), both starting checkpoints.
-5. Grow the IDEA dataset (remaining 100 chunks; gate: validate `--attn lsh` at scale) and/or
-   rebalance the track mix.
-6. [C] clustering stage (design follows [T]); ALLEGRO leave-one-out as the ultimate test.
+1. **Genfit-only refactor** (prerequisite hygiene): remove helix-fit/tier-1b modules, unify
+   evaluation on Genfit output (eff/fake binned by Genfit pT; kills the "provisional
+   helix-fit" plot disclaimers), `--detector cld|idea` flag for the chain, port the study
+   driver's per-file parallelization into the scripts, condor wrapper for the corpus pass.
+2. **Scale up the [T] mixed dataset**: remaining 100 IDEA chunks (→75k ev; gate: validate
+   `--attn lsh` at scale first — epoch cost) and/or rebalance the 90:10 track mix.
+3. **[T] IDEA-only training** (setup 2 of 3; Andrea may have one — coordinate, don't
+   duplicate) + the finetuning-curve study (IDEA performance vs # IDEA events; zero-shot →
+   few-shot → full; both starting checkpoints).
+4. **[C] calorimeter clustering**: migrate the clustering business from the legacy dev repo
+   AND implement the HEPTv2 slot-decoder approach for it (goal: beat object condensation),
+   on CLD first. The user meanwhile works with Sang Hyun Ko on the IDEA o2 calo truth-link
+   matching (the CreateTruthLinks hot-loop is the known blocker; offline/columnar truth
+   derivation is the planned fix) — IDEA [C] data arrives through that.
+5. **Mixed [C] training**: compare vs single-detector [C] AND vs the Pandora baseline
+   (CLD files carry Pandora PFOs; the HitPF parquet convention keeps them as `X_pandora`).
+6. **[PF]** stage, consuming cached Genfit track parameters + [C] clusters.
+   Ultimate portability test: ALLEGRO leave-one-out finetuning.
+
+### [C] migration pointers (next session starts here for step 4)
+
+- The legacy HitPF/[C] code lives in `~/projects/mlpf` (NOT a dependency — migrate, never
+  import): Stage-1 GATr + object-condensation in `src/models/GATr/Gatr_pf_e_noise.py` +
+  `src/layers/object_cond.py` (OC loss; gotchas in that repo's `docs/codebase_map.md`),
+  DPC inference in `src/layers/inference_oc.py`; the user's own Stage-2 work in
+  `analysis/s2_*.py`. Read `~/projects/mlpf/docs/references_digest.md` for the OC loss math.
+- The canonical parquet schema v0.2 already reserves calo groups (`postprocessing/README.md`);
+  CLD calo collections + truth are specified in `validation/README.md`. Pandora baseline
+  comparison = same pattern as conformal tracking in [T]: keep the classical answer in the
+  files, evaluate it with identical criteria.
+- Design intent: [C] = same encoder + slot-decoder pattern as [T] (calo hits → shower
+  slots), detector-blind features, union schema — a calo feature table with an origin
+  column, like the tracking one, should be produced early.
+
+### Operational state (cluster, jobs, storage)
+
+Lives OUTSIDE this repo by policy: `~/projects/mlpf/docs/fcc_mlpf_ops.md` (private). Read it
+before touching compute. Session memory from before 2026-10-13 is keyed to the old working
+directory; this file supersedes it.
 
 ## Working rules (user)
 
@@ -105,6 +151,10 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
 - `plots/` is gitignored (results live locally / in talks); testdata/ too.
 - This repo stays **compute-agnostic**: no cluster/batch-system specifics in any file here;
   operational state lives in the user's private notes (companion repo).
+- **Self-containment (user, 2026-10-13): fcc-mlpf must run out of the box on its own** —
+  `requirements.txt` + a key4hep environment cover everything; nothing may import from or
+  require the legacy development repo (mlpf). That repo holds only private deployment
+  configs and ops notes. When migrating remaining pieces, they move here, never the reverse.
 - The user is a particle physicist (CMS MLPF lead). When a design choice is on the table,
   explain it slowly and from first principles before implementing — he does not want to
   follow blindly. Human-facing docs follow the tone of his papers (measured, declarative,

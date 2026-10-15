@@ -55,6 +55,8 @@ def main():
         ax.plot(ctr[m], (S["fk_b"] / np.maximum(S["rec_b"], 1))[m], "s--",
                 color="tab:orange", label="baseline tracking")
     ax.set_ylabel("fake fraction", fontsize=FS); ax.set_yscale("log")
+    ax.text(0.03, 0.04, "binning: provisional helix-fit $p_T$ (not Genfit)",
+            transform=ax.transAxes, fontsize=10, color="0.35")
 
     for ax in axes:
         ax.set_xscale("log"); ax.set_xlabel("$p_T$ [GeV]", fontsize=FS)
@@ -63,6 +65,28 @@ def main():
     fig.tight_layout()
     p = os.path.join(args.out, f"overlay_eval_{args.tag}.pdf")
     fig.savefig(p)
+
+    # prompt/displaced efficiency split (present only if shards carry track_d0)
+    if "gt_tot_p" in S.files and S["gt_tot_p"].sum() > 0:
+        fig2, ax2 = plt.subplots(1, 2, figsize=(12, 4.8))
+        for j, (suf, title) in enumerate([("p", "prompt (true $|d_0| < 10\\,\\mu$m)"),
+                                          ("d", "displaced (true $|d_0| > 25\\,\\mu$m)")]):
+            okc = S[f"gt_tot_{suf}"] > 20
+            for lab, d, c, st in curves:
+                ax2[j].plot(ctr[okc], (d[f"gt_m_{suf}"] / np.maximum(d[f"gt_tot_{suf}"], 1))[okc],
+                            st, color=c, label=lab)
+            if has_base:
+                ax2[j].plot(ctr[okc], (S[f"gt_b_{suf}"] / np.maximum(S[f"gt_tot_{suf}"], 1))[okc],
+                            "s--", color="tab:orange", label="baseline tracking")
+            ax2[j].set_title(title, fontsize=FS - 1)
+            ax2[j].set_xscale("log"); ax2[j].set_xlabel("$p_T$ [GeV]", fontsize=FS)
+            ax2[j].set_ylabel("DM efficiency", fontsize=FS); ax2[j].set_ylim(0, 1.05)
+            ax2[j].legend(fontsize=FS - 4); ax2[j].grid(alpha=0.3)
+        fig2.suptitle(f"[T] track finding, {args.tag.upper()} test set", fontsize=FS)
+        fig2.tight_layout()
+        p2 = os.path.join(args.out, f"overlay_eval_{args.tag}_split.pdf")
+        fig2.savefig(p2)
+        print(f"wrote {p2}")
 
     for lab, d in [("single", S), ("mixed", X)]:
         print(f"{lab:7s} inclusive: eff {d['gt_m'].sum()/max(d['gt_tot'].sum(),1):.4f} "

@@ -13,7 +13,7 @@ stage.
 Training requires plain Python (no key4hep):
 
 ```bash
-pip install torch numpy pyarrow scipy matplotlib        # python >= 3.10
+pip install -r requirements.txt        # repo root; python >= 3.10
 ```
 
 A single modern GPU suffices. Events with several thousand hits (IDEA drift chamber) run

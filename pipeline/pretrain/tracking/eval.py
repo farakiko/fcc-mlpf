@@ -70,6 +70,9 @@ def main():
 
     nb = len(CTR)
     gt_tot = np.zeros(nb); gt_m = np.zeros(nb); gt_b = np.zeros(nb)   # eff vs truth pT
+    # prompt (true |d0| < 10 um) / displaced (> 25 um) split of the efficiency
+    gt_tot_p = np.zeros(nb); gt_m_p = np.zeros(nb); gt_b_p = np.zeros(nb)
+    gt_tot_d = np.zeros(nb); gt_m_d = np.zeros(nb); gt_b_d = np.zeros(nb)
     fk_m = np.zeros(nb); rec_m = np.zeros(nb)                         # model fake frac vs fitted pT
     fk_b = np.zeros(nb); rec_b = np.zeros(nb)
     res_m, res_b = [[] for _ in range(nb)], [[] for _ in range(nb)]   # fitted-pT residuals
@@ -88,9 +91,17 @@ def main():
                 pred = np.where((P.max(0).values > args.thr).cpu().numpy(),
                                 P.argmax(0).cpu().numpy(), -1)
                 gts = _tracks(ev["y"], 1)
-                for finder, (fk, rec, resv, gtm) in [
-                        (np.asarray(pred), (fk_m, rec_m, res_m, gt_m)),
-                        (ev.get("base_y"), (fk_b, rec_b, res_b, gt_b))]:
+                td0 = ev.get("track_d0")
+
+                def cls(t):
+                    if td0 is None:
+                        return None
+                    a = abs(float(td0[t]))
+                    return "p" if a < 0.010 else ("d" if a > 0.025 else None)
+
+                for finder, (fk, rec, resv, gtm, gtm_p, gtm_d) in [
+                        (np.asarray(pred), (fk_m, rec_m, res_m, gt_m, gt_m_p, gt_m_d)),
+                        (ev.get("base_y"), (fk_b, rec_b, res_b, gt_b, gt_b_p, gt_b_d))]:
                     if finder is None:
                         continue
                     recos = _tracks(finder.astype(np.int64))
@@ -101,6 +112,11 @@ def main():
                         bi = np.searchsorted(EDGES, ev["track_pt"][t]) - 1
                         if 0 <= bi < nb and t in matched_gt:
                             gtm[bi] += 1
+                            c_ = cls(t)
+                            if c_ == "p":
+                                gtm_p[bi] += 1
+                            elif c_ == "d":
+                                gtm_d[bi] += 1
                     for s, hits in recos.items():
                         if len(hits) < 4:
                             continue
@@ -123,6 +139,11 @@ def main():
                     bi = np.searchsorted(EDGES, ev["track_pt"][t]) - 1
                     if 0 <= bi < nb:
                         gt_tot[bi] += 1
+                        c_ = cls(t)
+                        if c_ == "p":
+                            gt_tot_p[bi] += 1
+                        elif c_ == "d":
+                            gt_tot_d[bi] += 1
 
     def iqr(x):
         if len(x) < 20:
@@ -148,7 +169,9 @@ def main():
     # binned arrays for cross-run overlay plots (see genfit/overlay_evals.py)
     np.savez(os.path.join(args.outdir, "eval_binned.npz"),
              edges=EDGES, gt_tot=gt_tot, gt_m=gt_m, gt_b=gt_b,
-             fk_m=fk_m, rec_m=rec_m, fk_b=fk_b, rec_b=rec_b, n_ev=n_ev)
+             fk_m=fk_m, rec_m=rec_m, fk_b=fk_b, rec_b=rec_b, n_ev=n_ev,
+             gt_tot_p=gt_tot_p, gt_m_p=gt_m_p, gt_b_p=gt_b_p,
+             gt_tot_d=gt_tot_d, gt_m_d=gt_m_d, gt_b_d=gt_b_d)
 
     # ---- plots ----
     import matplotlib; matplotlib.use("Agg")
@@ -162,9 +185,13 @@ def main():
     axes[1].plot(CTR[okm], (fk_m / np.maximum(rec_m, 1))[okm], "o-", label="HEPTv2")
     axes[1].plot(CTR[okb], (fk_b / np.maximum(rec_b, 1))[okb], "s--", label="conformal")
     axes[1].set_ylabel("fake fraction (vs fitted $p_T$)"); axes[1].set_yscale("log")
+    axes[1].text(0.03, 0.04, "binning: provisional helix-fit $p_T$ (not Genfit)",
+                 transform=axes[1].transAxes, fontsize=9, color="0.35")
     axes[2].plot(CTR, [100 * iqr(r) for r in res_m], "o-", label="HEPTv2")
     axes[2].plot(CTR, [100 * iqr(r) for r in res_b], "s--", label="conformal")
-    axes[2].set_ylabel("tier-1 fitted-$p_T$ resolution [%]"); axes[2].set_yscale("log")
+    axes[2].set_ylabel("fitted-$p_T$ resolution [%]"); axes[2].set_yscale("log")
+    axes[2].text(0.03, 0.04, "provisional helix fit (not Genfit)",
+                 transform=axes[2].transAxes, fontsize=9, color="0.35")
     for ax in axes:
         ax.set_xscale("log"); ax.set_xlabel("$p_T$ [GeV]"); ax.legend(); ax.grid(alpha=0.3)
     fig.tight_layout()

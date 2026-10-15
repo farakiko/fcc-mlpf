@@ -1,0 +1,12 @@
+# fcc-mlpf python dependencies (python >= 3.10).
+# Training/evaluation ([T] pipeline):
+torch
+numpy
+scipy
+pyarrow
+matplotlib
+# EDM4hep ROOT reading (postprocessing adapters, validation audit, genfit chain step A/D):
+uproot
+awkward
+# NOT covered here: the Genfit fitting step (k4run) and sample production run inside a
+# key4hep environment (see the respective READMEs); nothing else is required.
