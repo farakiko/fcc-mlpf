@@ -68,7 +68,16 @@ def plot_training(run, out_pdf):
         if steps:
             ax.plot([s["frac"] for s in steps], [s["loss"] for s in steps], lw=0.8, color="0.6",
                     label=f"train (running, {steps[0].get('window', '')} events)")
-        ax.plot(ep, [r["loss"] for r in rows], "o-", color="k", label="train (epoch mean)")
+        tl = np.array([r["loss"] for r in rows], float)
+        derived = ~np.isfinite(tl)                   # e.g. a NaN-valued event in the epoch
+        for k in np.where(derived)[0]:               # -> mean of the finite running windows
+            w = [(s["loss"], s["window"]) for s in steps if s["ep"] == rows[k]["ep"]
+                 and np.isfinite(s["loss"])]
+            tl[k] = np.average([a for a, _ in w], weights=[b for _, b in w]) if w else np.nan
+        ax.plot(ep, tl, "o-", color="k", label="train (epoch mean)")
+        if derived.any():
+            ax.plot(ep[derived], tl[derived], "o", mfc="w", color="k",
+                    label="train (epoch mean of finite windows)")
         ax.plot(ep, [r["val_loss"] for r in rows], "s-", color="tab:red", label="validation (all samples)")
         ax.set_yscale("log"); ax.set_ylabel("loss")
         ax = axes[1]

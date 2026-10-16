@@ -102,7 +102,11 @@ def event_loss(model, ev, dev):
     ki, mi = hungarian(A, act, Astar)
     Am = A[mi]
     ytgt = torch.zeros(M, device=dev); ytgt[mi] = 1.0
-    loss = (W_ASSIGN * focal(Am, Astar[ki]) + W_DICE * dice_row(Am, Astar[ki])
+    # an event without selected truth tracks (K = 0) has no matched slots: the mask terms
+    # would be means over empty tensors (NaN value, zero gradient); A.sum() * 0 keeps the
+    # zero gradient of the mask head (AdamW still steps it) with a finite value
+    mask = (W_ASSIGN * focal(Am, Astar[ki]) + W_DICE * dice_row(Am, Astar[ki])) if K else A.sum() * 0.0
+    loss = (mask
             + W_CLS * F.binary_cross_entropy_with_logits(act, ytgt)
             + W_BG * F.binary_cross_entropy_with_logits(bg, (~on).float())
             + W_NCE * infonce(z, y))

@@ -312,6 +312,11 @@ directory; this file supersedes it.
 
 ## Gotchas that cost us time already
 
+- An event with no selected truth track (K = 0; one in the whole CLD corpus: cld_40gev
+  chunk 386, event 26) made the Hungarian mask terms means over empty tensors: NaN loss
+  VALUE with finite gradients, so training was unaffected but the logged epoch-mean train
+  loss was NaN (t_cld_all, launched at 1bd0b56, carries this in every epoch; plot_training
+  falls back to the finite running windows). Fixed after 1bd0b56 with bit-identical gradients.
 - `set -u` + `source` key4hep setup.sh = instant silent shell death (its internals trip
   unbound-variable; if the source line discards output you see nothing). Guard with `set +u`.
 - Plain `-r` on the nightlies setup silently falls back to the stable stack; use `--spack -r`.
