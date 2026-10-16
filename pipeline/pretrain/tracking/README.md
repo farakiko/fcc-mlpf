@@ -68,7 +68,7 @@ loop streams one shard at a time in a freshly shuffled order each epoch, so even
 different samples are interleaved in random blocks. Shards are stored compactly (`.ptz`:
 zlib-compressed, int32 labels, no redundant η/φ copy): about 41 bytes per hit, 4.7 times
 less than plain `torch.save`, at about 2 ms decompression per shard; the six CLD samples
-(1.15 M events) take 27 GB. Shards of earlier caches (`.pt`) are still read. A cache
+(1.15 M events) take 23 GB. Shards of earlier caches (`.pt`) are still read. A cache
 can be prebuilt in parallel before training (held-out chunks first):
 
 ```bash
@@ -80,10 +80,25 @@ an assertion if the default is too small (the CLD tt̄ corpus requires `--slots 
 
 Monitoring: `metrics.jsonl` records, per epoch, the training loss, the validation loss
 overall and per sample (`val_loss_det`; a sample is a dataset directory, e.g. `cld_91gev`),
-and double-majority efficiency/fake rate per sample on a fixed validation subsample drawn
-equally from every sample; `loss_curve.pdf` is refreshed every epoch; `best.pt` holds the
-checkpoint with the highest mean per-sample efficiency and `last.pt` the resume point. `--mirror <dir>` copies these
-artifacts after every epoch.
+and, on a fixed validation subsample drawn equally from every sample, the double-majority
+efficiency and inclusive fake rate per sample and the efficiency counts in the true-pT bins
+of `eval.py` (`dm_pt`; model and baseline, also split prompt/displaced).
+`train_steps.jsonl` holds the running training loss every `--log-every` events.
+`training_curves.pdf` (`plot_training.py`, rewritten every epoch and runnable at any time on
+a run directory) shows the losses, the efficiency and fake rate per sample, and the
+efficiency vs true pT per sample, all against the epoch. `ep_<NNN>.pt` keeps the weights of
+every epoch, so `eval.py` (full held-out statistics) and the Genfit chain can be run on any
+epoch afterwards; `best.pt` is the epoch with the highest mean per-sample efficiency.
+
+Recovery: `last.pt` is written at the end of every epoch and, inside an epoch, at a shard
+boundary every `--ckpt-minutes` (default 30). It carries the model, optimizer, scheduler,
+the epoch's shard order, the position in it and the random states (numpy and torch, both
+seeded at start), so `--resume last.pt` continues exactly where training stopped: on CPU a
+run killed inside an epoch and resumed reproduces the uninterrupted run bit for bit; on GPU,
+up to the usual floating-point nondeterminism. An interruption costs at most `--ckpt-minutes`
+of training. All checkpoints are written through a temporary file and an
+atomic rename. `--mirror <dir>` copies the monitoring files, `best.pt`, `last.pt` and the
+latest `ep_<NNN>.pt` after every epoch.
 
 ## The input feature vector
 

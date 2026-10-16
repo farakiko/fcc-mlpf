@@ -15,6 +15,13 @@ val convention; test tracks the val loss, no third split for now):
   python train.py --inputs '<derived>/cld_ttbar/chunk_*.parquet' --test-first 45 \
       --shard-cache /fast/disk/shards_cld --epochs 20 \
       --outdir runs/t_cld90k --mirror /eos/user/.../runs/t_cld90k
+Resume after an interruption: same command + --resume <outdir>/last.pt. last.pt is written
+at the end of every epoch and every --ckpt-minutes inside an epoch (with the shard order,
+position and random states, so training continues as if uninterrupted); all
+checkpoints are written atomically. Outputs per run: metrics.jsonl (per epoch: losses,
+per-sample DM efficiency/fake rate, efficiency counts in true-pT bins), train_steps.jsonl
+(running training loss), training_curves.pdf (plot_training.py), ep_<NNN>.pt (weights after
+every epoch, for eval.py at any epoch), best.pt, last.pt.
 """
 import argparse
 import glob as globlib
@@ -31,8 +38,10 @@ from scipy.optimize import linear_sum_assignment
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import build_cache, build_shards, load_shard, sample_of
+from eval import EDGES, accumulate, new_acc
 from metrics import dm_match, track_sets
 from model import TrackFormer
+from plot_training import plot_training
 
 W_CLS, W_ASSIGN, W_DICE, W_BG, W_NCE = 0.1, 200.0, 2.0, 1.8, 12.0
 TAU = 0.07
@@ -103,14 +112,15 @@ def event_loss(model, ev, dev):
 # ------------------------------------------------------------------ DM eval
 @torch.no_grad()
 def evaluate(model, evs, dev, thr=0.5):
-    """-> {sample: (model_eff, model_fake, base_eff|None, base_fake|None, n_gt)}, sample =
-    dataset (data.sample_of). Finding level only (metrics.dm_match); fitted quantities come
-    from the Genfit chain."""
-    acc = {}
+    """-> ({sample: (model_eff, model_fake, base_eff|None, base_fake|None, n_gt)},
+    {sample: eval.py's binned counts in true pT}), sample = dataset (data.sample_of).
+    Finding level only (metrics.dm_match); fitted quantities come from the Genfit chain."""
+    acc, bins = {}, {}
     for ev in evs:
         s = acc.setdefault(sample_of(ev), np.zeros(8))
         pred = model.assign(torch.from_numpy(ev["x"]).to(dev),
                             torch.from_numpy(ev["etaphi"]).to(dev), thr)
+        accumulate(bins.setdefault(sample_of(ev), new_acc()), ev, pred)
         gts = track_sets(ev["y"], 1)
         s[:4] += dm_match(track_sets(pred), gts)[0]
         if "base_y" in ev:
@@ -121,42 +131,21 @@ def evaluate(model, evs, dev, thr=0.5):
         be = s[5] / max(s[4], 1) if s[4] else None
         bf = s[7] / max(s[6], 1) if s[4] else None
         out[d] = (me, mf, be, bf, int(s[0]))
-    return out
+    return out, bins
 
 
-def _loss_curve(metrics_path, out_pdf):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    rows = [json.loads(l) for l in open(metrics_path)]
-    if not rows:
-        return
-    ep = [r["ep"] for r in rows]
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-    axes[0].plot(ep, [r["loss"] for r in rows], label="train")
-    axes[0].plot(ep, [r["val_loss"] for r in rows], label="test (tracks val)")
-    axes[0].set_xlabel("epoch"); axes[0].set_ylabel("loss"); axes[0].set_yscale("log")
-    axes[0].legend(); axes[0].grid(alpha=0.3)
-    dets = sorted({d for r in rows for d in r.get("dm", {})})
-    for d in dets:
-        e_ = [r["ep"] for r in rows if d in r.get("dm", {})]
-        axes[1].plot(e_, [r["dm"][d][0] for r in rows if d in r.get("dm", {})], "o-", label=f"{d} eff")
-        axes[1].plot(e_, [r["dm"][d][1] for r in rows if d in r.get("dm", {})], "s--", label=f"{d} fake")
-        if rows[-1].get("dm", {}).get(d, [None, None, None])[2] is not None:
-            axes[1].axhline(rows[-1]["dm"][d][2], color="gray", ls=":", lw=1)
-    axes[1].set_xlabel("epoch"); axes[1].set_ylabel("DM eff / fake (dotted: baseline eff)")
-    axes[1].set_ylim(0, 1)
-    if dets:
-        axes[1].legend(fontsize=8)
-    axes[1].grid(alpha=0.3)
-    fig.tight_layout(); fig.savefig(out_pdf); plt.close(fig)
+def _save(obj, path):
+    """torch.save via a temporary file: an interruption never leaves a truncated checkpoint."""
+    torch.save(obj, path + ".tmp")
+    os.replace(path + ".tmp", path)
 
 
-def _mirror(outdir, mirror):
+def _mirror(outdir, mirror, ep):
     if not mirror:
         return
     os.makedirs(mirror, exist_ok=True)
-    for f in ("metrics.jsonl", "loss_curve.pdf", "best.pt", "last.pt"):
+    for f in ("metrics.jsonl", "train_steps.jsonl", "training_curves.pdf", "best.pt", "last.pt",
+              f"ep_{ep:03d}.pt"):
         p = os.path.join(outdir, f)
         if os.path.exists(p):
             try:
@@ -199,9 +188,16 @@ def main():
     ap.add_argument("--eval-every", type=int, default=1)
     ap.add_argument("--outdir", default="runs/t_dev")
     ap.add_argument("--mirror", default="",
-                    help="copy metrics.jsonl/loss_curve.pdf/checkpoints here after each eval "
+                    help="copy metrics/curves/checkpoints here after every epoch "
                          "(e.g. an EOS path for monitoring)")
-    ap.add_argument("--resume", default="", help="last.pt to resume from (model+opt+epoch)")
+    ap.add_argument("--resume", default="",
+                    help="last.pt to resume from (model, optimizer, scheduler, epoch, position "
+                         "inside the epoch, random state)")
+    ap.add_argument("--ckpt-minutes", type=float, default=30,
+                    help="also write last.pt inside an epoch, at shard boundaries, every this "
+                         "many minutes (0 = end of epoch only)")
+    ap.add_argument("--log-every", type=int, default=20000,
+                    help="append the running training loss to train_steps.jsonl every N events")
     ap.add_argument("--check", action="store_true",
                     help="stability check: 3 epochs, finiteness asserts, per-detector eval, no checkpoints")
     args = ap.parse_args()
@@ -215,7 +211,8 @@ def main():
               for p in args.inputs]
     files = sum(groups, [])
     assert files, f"no inputs match {args.inputs}"
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(0)                    # data order
+    torch.manual_seed(0)                              # initialization, InfoNCE anchors
 
     if args.shard_cache:  # ---- streaming mode
         if args.test_frac:
@@ -281,19 +278,47 @@ def main():
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs * n_train, 1))
-    start_ep, best = 0, 0.0
+    start_ep, best, resume = 0, 0.0, None
     if args.resume:
         ck = torch.load(args.resume, map_location=dev, weights_only=False)
         model.load_state_dict(ck["state_dict"]); opt.load_state_dict(ck["opt"])
-        start_ep, best = ck["ep"] + 1, ck.get("best", 0.0)
-        for _ in range(start_ep * n_train):
-            sched.step()
-        print(f"resumed from {args.resume} at epoch {start_ep}", flush=True)
+        best = ck.get("best", 0.0)
+        if ck.get("pos") is not None:                 # written inside an epoch
+            start_ep, resume = ck["ep"], ck
+        else:
+            start_ep = ck["ep"] + 1
+        if "sched" in ck:
+            sched.load_state_dict(ck["sched"])
+        else:                                         # checkpoints written before 2026-10-15
+            for _ in range(start_ep * n_train):
+                sched.step()
+        if "rng" in ck:                               # the data order continues exactly
+            rng.bit_generator.state = ck["rng"]
+        if "torch_rng" in ck:                         # and so do the torch random draws
+            torch.set_rng_state(ck["torch_rng"].cpu())
+            if dev.type == "cuda" and ck.get("cuda_rng"):
+                torch.cuda.set_rng_state_all([s.cpu() for s in ck["cuda_rng"]])
+        print(f"resumed from {args.resume} at epoch {start_ep}"
+              + (f", shard {resume['pos']}/{len(resume['order'])}" if resume else ""), flush=True)
 
     metrics_path = os.path.join(args.outdir, "metrics.jsonl")
+    steps_path = os.path.join(args.outdir, "train_steps.jsonl")
+    last_path = os.path.join(args.outdir, "last.pt")
+    state = lambda **kw: dict(state_dict=model.state_dict(), opt=opt.state_dict(),
+                              sched=sched.state_dict(), rng=rng.bit_generator.state,
+                              torch_rng=torch.get_rng_state(),
+                              cuda_rng=torch.cuda.get_rng_state_all() if dev.type == "cuda" else None,
+                              best=best, args=vars(args), **kw)
     for ep in range(start_ep, args.epochs):
-        model.train(); t0 = time.time(); tot = nev = 0
-        for sj in rng.permutation(len(trn_shards)):
+        model.train()
+        if resume is not None:                        # finish the interrupted epoch
+            order, pos0, tot, nev = resume["order"], resume["pos"], resume["tot"], resume["nev"]
+            sec0, resume = resume.get("sec", 0.0), None
+        else:
+            order, pos0, tot, nev, sec0 = rng.permutation(len(trn_shards)), 0, 0.0, 0, 0.0
+        t0 = t_ck = time.time(); win = []
+        for j in range(pos0, len(order)):
+            sj = order[j]
             shard = trn_shards[sj] if not args.shard_cache else load_shard(trn_shards[sj])
             for i in rng.permutation(len(shard)):
                 loss = event_loss(model, shard[i], dev)
@@ -302,7 +327,21 @@ def main():
                 opt.zero_grad(); loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 opt.step(); sched.step()
-                tot += loss.item(); nev += 1
+                li = loss.item(); tot += li; nev += 1; win.append(li)
+                if args.log_every and nev % args.log_every == 0:
+                    srec = dict(ep=ep, nev=nev, frac=round(ep + nev / max(n_train, 1), 4),
+                                loss=round(float(np.mean(win)), 4), window=len(win),
+                                lr=sched.get_last_lr()[0], sec=round(sec0 + time.time() - t0, 1))
+                    with open(steps_path, "a") as f:
+                        f.write(json.dumps(srec) + "\n")
+                    print(f"  ep {ep} {nev}/{n_train} ev  running loss {srec['loss']:.3f}  "
+                          f"lr {srec['lr']:.2e}  [{srec['sec']:.0f}s]", flush=True)
+                    win = []
+            if (args.ckpt_minutes and not args.check
+                    and time.time() - t_ck > 60 * args.ckpt_minutes and j + 1 < len(order)):
+                _save(state(ep=ep, pos=j + 1, order=order, tot=tot, nev=nev,
+                            sec=sec0 + time.time() - t0), last_path)
+                t_ck = time.time()
         tot /= max(nev, 1)
 
         model.eval()
@@ -314,15 +353,18 @@ def main():
         rec = dict(ep=ep, loss=tot, val_loss=vloss,
                    val_loss_det={d: round(float(np.mean(v)), 4) for d, v in vdet.items()},
                    val_n_det={d: len(v) for d, v in vdet.items()},
-                   sec=round(time.time() - t0, 1))
+                   sec=round(sec0 + time.time() - t0, 1))
         line = f"ep {ep:3d}  loss {tot:9.3f}  val {vloss:9.3f}"
         if len(vdet) > 1:
             line += " (" + " ".join(f"{d}:{np.mean(v):.3f}" for d, v in sorted(vdet.items())) + ")"
         line += f"  [{time.time()-t0:.0f}s]"
         if (ep + 1) % args.eval_every == 0 or ep == args.epochs - 1:
-            res = evaluate(model, eval_sub, dev)
+            res, bins = evaluate(model, eval_sub, dev)
             rec["dm"] = {d: [round(v, 4) if v is not None else None for v in r[:4]]
                          for d, r in res.items()}
+            rec["pt_edges"] = EDGES.tolist()          # eval.py's binning, true pT [GeV]
+            rec["dm_pt"] = {d: {k: v.astype(int).tolist() for k, v in a.items()
+                                if isinstance(v, np.ndarray)} for d, a in bins.items()}
             for d, (me, mf, be, bf, n) in sorted(res.items()):
                 line += f"  | {d}: DM {me:.3f}/{mf:.3f}"
                 if be is not None:
@@ -331,16 +373,19 @@ def main():
             eff = np.mean([r[0] for r in res.values()])
             if eff >= best and not args.check:
                 best = eff
-                torch.save(dict(state_dict=model.state_dict(), args=vars(args)),
-                           os.path.join(args.outdir, "best.pt"))
+                _save(dict(state_dict=model.state_dict(), args=vars(args), ep=ep),
+                      os.path.join(args.outdir, "best.pt"))
         with open(metrics_path, "a") as f:
             f.write(json.dumps(rec) + "\n")
         if not args.check:
-            torch.save(dict(state_dict=model.state_dict(), opt=opt.state_dict(),
-                            ep=ep, best=best, args=vars(args)),
-                       os.path.join(args.outdir, "last.pt"))
-            _loss_curve(metrics_path, os.path.join(args.outdir, "loss_curve.pdf"))
-            _mirror(args.outdir, args.mirror)
+            _save(dict(state_dict=model.state_dict(), args=vars(args), ep=ep),
+                  os.path.join(args.outdir, f"ep_{ep:03d}.pt"))
+            _save(state(ep=ep, pos=None), last_path)
+            try:                                      # a plotting problem must not stop training
+                plot_training(args.outdir, os.path.join(args.outdir, "training_curves.pdf"))
+            except Exception as e:
+                print(f"  [plot] {e!r}", flush=True)
+            _mirror(args.outdir, args.mirror, ep)
         print(line, flush=True)
     print(("CHECK PASSED: losses finite, both-detector eval ran" if args.check
            else f"best mean DM eff {best:.3f} -> {args.outdir}/best.pt"), flush=True)

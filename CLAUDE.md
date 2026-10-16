@@ -196,11 +196,17 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
 - **CLD all-energies training (user, 2026-10-15; current focus)**: one CLD-only [T] model on
   cld_ttbar + cld_{40,91,160,240,365}gev (1.15M events, 5749 chunks; all six carry the
   conformal baseline). Hope: better convergence from more/diverse data and coverage of every
-  energy. Setup: compact .ptz shard cache /shared/fcc-mlpf-shards/cld_all (27 GB, 5749 shards, built 2026-10-15; prebuilt
+  energy. Setup: compact .ptz shard cache /shared/fcc-mlpf-shards/cld_all (23 GB, 5749 shards, built 2026-10-15; prebuilt
   on pf-pod with `python data.py --jobs 7 --test-frac 0.1`), per-sample monitoring and eval
   (sample = dataset dir), job manifest mlpf/kube/train_job_tracking_cldall.yml (job
   mlpf-t-energies, run dir /shared/runs/t_cld_all, 20 epochs, lr 1e-4, slots 200; held-out
-  max K 161). Benchmark (MIG 1g.12gb): 11/12/12/14.5/14/20 ms per training event for
+  max K 161). Training split per sample (40/91/160/240/365/ttbar): 180.0k/180.0k/180.0k/
+  181.8k/232.2k/80.3k events = 1,034,260; truth tracks/ev (charged, pT > 0.1, >= 3 hits;
+  1600 events spread over each sample) 17.4/25.6/33.1/39.3/46.7/67.0 -> ~37M training tracks,
+  shares 8/12/16/19/29/15% (by events 17/17/17/18/22/8%; one event per optimizer step, so
+  gradient weight follows events), 7x the tracks of the ttbar-only run; fraction of tracks
+  below 1 GeV 0.67/0.60/0.56/0.53/0.50/0.52 (sub-GeV training tracks 20M vs 2.8M ttbar-only).
+  Benchmark (MIG 1g.12gb): 11/12/12/14.5/14/20 ms per training event for
   40/91/160/240/365/ttbar -> ~4 h/epoch, ~82 h total. Reference before training: the
   ttbar-only (t_cld90k) and mixed (t_mixed) checkpoints evaluated per energy on the first 10
   held-out chunks of each sample (/shared/runs/energies_ref/; 2000 events per sample):
@@ -211,7 +217,14 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   the headroom is below 1 GeV (~0.4 at 0.15 GeV) and in fakes. The mixed model is better at
   EVERY CLD energy (fakes down ~1/3 at 40-240 GeV): diversity helps beyond the training
   energy — the new run must beat both references, per energy. Pod CPU quota is 7 cores
-  (nproc reports 384).
+  (nproc reports 384). Pre-launch checks (2026-10-16): no duplicate events among all
+  1,149,660 (exact hit matrix or generator-level K + top-5 pT; none across train/held-out
+  or across samples); ttbar held-out = the 45 chunks of t_cld90k. Same recipe as t_cld90k
+  (only the data differ; 20 epochs = 13x more optimizer steps; torch now seeded, the old
+  init was an unseeded draw). train.py additions for this run: last.pt every 30 min inside
+  an epoch (exact continuation: data order, numpy + torch RNG, scheduler; atomic writes),
+  ep_NNN.pt every epoch, efficiency counts in true-pT bins per sample in metrics.jsonl,
+  train_steps.jsonl, training_curves.pdf (plot_training.py, runnable on a live run).
 
 ## Roadmap (user, 2026-10-13 — the plan for the next sessions, in order)
 
@@ -291,7 +304,7 @@ directory; this file supersedes it.
 - `pipeline/pretrain/tracking/` [T]: `data.py` (features/shards; `python data.py` prebuilds a
   shard cache in parallel), `model.py` (+ the hit-
   assignment rule `TrackFormer.assign`, `load_checkpoint`), `metrics.py` (shared definitions),
-  `train.py`, `eval.py`, `overlay_evals.py`, `plot_features.py`; `genfit/`: `detectors.py`
+  `train.py`, `eval.py`, `plot_training.py` (training curves), `overlay_evals.py`, `plot_features.py`; `genfit/`: `detectors.py`
   (per-detector config), `export_infer.py` (A), `write_mltracks.py` (B), `run_genfit.py` (C),
   `states_to_parquet.py` (D), `analyze_fitted.py` (E), `edm4hep_io.py` (uproot readers).
 - Pinned stacks: CLD = key4hep 2026-04-08; IDEA + Genfit = nightly 2026-10-04 (nightlies get
