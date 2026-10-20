@@ -12,6 +12,10 @@
 #   source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh --spack -r 2026-10-04
 #   k4run run_genfit.py --detector cld --inputFile <rec_ml.edm4hep.root>[,<rec_ml2>,...] \
 #         --inputTracks MLTracks --outputFile fitted.edm4hep.root [--nev 5]
+#   several collections in one pass (one fitter instance each, one I/O pass for all):
+#   k4run run_genfit.py --detector cld --inputFile <rec_ml> --outputFile fitted.edm4hep.root \
+#         --inputTracks MLTracks_v1,MLTracks_v2,SiTracks_Refitted \
+#         --outputTracks GenfitTracks_v1,GenfitTracks_v2,GenfitBaseTracks
 #
 # Commissioning input = the conformal tracker's collection (--inputTracks SiTracks_Refitted);
 # the ML pipeline swaps in the exported ML track collection (same algorithm, finder-agnostic
@@ -38,10 +42,11 @@ parser.add_argument("--inputFile", required=True,
                     help="input file, or comma-separated list (one geometry init for all)")
 parser.add_argument("--outputFile", default="genfit_fitted.edm4hep.root")
 parser.add_argument("--inputTracks", default="SiTracks_Refitted",
-                    help="name of the input TrackCollection to refit")
+                    help="input TrackCollection to refit, or a comma-separated list")
 parser.add_argument("--outputTracks", default="GenfitTracks",
-                    help="name of the fitted TrackCollection (change it to refit a file that "
-                         "already carries GenfitTracks, e.g. the baseline after an ML chain)")
+                    help="fitted TrackCollection name, or a comma-separated list parallel to "
+                         "--inputTracks (change it to refit a file that already carries "
+                         "GenfitTracks, e.g. the baseline after an ML chain)")
 parser.add_argument("--nev", type=int, default=-1)
 parser.add_argument("--geometry", default="",
                     help="compact XML (default: the detector's entry in detectors.py under $K4GEO)")
@@ -54,28 +59,34 @@ io_svc.Input = args.inputFile.split(",") if "," in args.inputFile else args.inpu
 io_svc.Output = args.outputFile
 
 from Configurables import GenfitTrackFitter
-fitter = GenfitTrackFitter(
-    "GenfitTrackFitter",
-    InputTracks=[args.inputTracks],
-    OutputFittedTracks=[args.outputTracks],
-    OutputFittedTracksWithFilteredHits=[args.outputTracks + "FilteredHits"],
-    OutputFittedHits=["GenfitHits" if args.outputTracks == "GenfitTracks" else args.outputTracks + "Hits"],
-    OutputLevel=INFO,
-)
-fitter.UseBrems = False
-# DAF annealing (defaults from k4RecTracker's reference steering)
-fitter.BetaInit = 100
-fitter.BetaFinal = 0.05
-fitter.BetaSteps = 15
-fitter.InitializationType = 1
-fitter.SkipTrackOrdering = False
-# NOTE: do NOT set ListOfTypesToSkip=[0] (as in the k4RecTracker reference steering): that
-# is a GGTF convention marking unmatched tracks with type=0 -- freshly created ML track
-# collections carry the default type 0 and would ALL be skipped (learned the hard way).
-fitter.ListOfTypesToSkip = []
-fitter.FilterTrackHits = True
-if cfg["wire_tracker"]:
-    fitter.WireTrackerName = cfg["wire_tracker"]
+ins, outs = args.inputTracks.split(","), args.outputTracks.split(",")
+if len(ins) != len(outs):
+    sys.exit(f"--inputTracks has {len(ins)} collections, --outputTracks {len(outs)}")
+fitters = []
+for inp, out in zip(ins, outs):
+    fitter = GenfitTrackFitter(
+        "GenfitTrackFitter" if len(ins) == 1 else f"GenfitTrackFitter_{out}",
+        InputTracks=[inp],
+        OutputFittedTracks=[out],
+        OutputFittedTracksWithFilteredHits=[out + "FilteredHits"],
+        OutputFittedHits=["GenfitHits" if out == "GenfitTracks" else out + "Hits"],
+        OutputLevel=INFO,
+    )
+    fitter.UseBrems = False
+    # DAF annealing (defaults from k4RecTracker's reference steering)
+    fitter.BetaInit = 100
+    fitter.BetaFinal = 0.05
+    fitter.BetaSteps = 15
+    fitter.InitializationType = 1
+    fitter.SkipTrackOrdering = False
+    # NOTE: do NOT set ListOfTypesToSkip=[0] (as in the k4RecTracker reference steering): that
+    # is a GGTF convention marking unmatched tracks with type=0 -- freshly created ML track
+    # collections carry the default type 0 and would ALL be skipped (learned the hard way).
+    fitter.ListOfTypesToSkip = []
+    fitter.FilterTrackHits = True
+    if cfg["wire_tracker"]:
+        fitter.WireTrackerName = cfg["wire_tracker"]
+    fitters.append(fitter)
 
 from Configurables import GeoSvc
 geoservice = GeoSvc("GeoSvc")
@@ -87,7 +98,7 @@ from k4FWCore import ApplicationMgr
 audsvc = AuditorSvc()
 audsvc.Auditors = [ChronoAuditor()]
 ApplicationMgr(
-    TopAlg=[fitter],
+    TopAlg=fitters,
     EvtSel="NONE",
     ExtSvc=[geoservice, EventDataSvc("EventDataSvc"), audsvc],
     StopOnSignal=True,

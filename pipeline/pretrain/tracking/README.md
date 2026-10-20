@@ -148,7 +148,9 @@ fake. The in-training monitor uses the same code.
   evaluated identically where the files carry one (CLD: conformal tracking). A fake has no
   truth particle, so a fake rate versus pT requires a fitted pT and belongs to the next
   level. Binned counts are saved to `eval_binned_<sample>.npz`; `overlay_evals.py` overlays
-  several trainings and the baseline. This level is cheap enough to run on every checkpoint.
+  several trainings and the baseline, per sample, given either single files or eval.py
+  output directories (then with a summary page of the inclusive efficiency and fake rate
+  per sample; `--no-baseline` omits the baseline curves). This level is cheap enough to run on every checkpoint.
 - **Fitted level, Genfit** — the chain in `genfit/` fits the candidates, and
   `genfit/analyze_fitted.py` reports the chain efficiency (found and fit converged), the
   fake rate versus Genfit pT, the fit-failure rate, resolutions, pulls and the

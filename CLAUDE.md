@@ -226,6 +226,28 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   ep_NNN.pt every epoch, efficiency counts in true-pT bins per sample in metrics.jsonl,
   train_steps.jsonl, training_curves.pdf (plot_training.py, runnable on a live run).
 
+- **CLD all-energies result (2026-10-20; v2 = t_cld_all ep_019.pt, final epoch; best.pt =
+  ep 17 by the threshold-dependent monitor, superseded)**. Names: v1 CLD-only (t_cld90k),
+  v1 mixed (t_mixed), v2 CLD-only (t_cld_all). Finding level, FULL held-out set per sample
+  (/shared/runs/energies_full/; plots/trk_fit/v5/overlay_eval_cld_v1_mixed_v2.pdf), eff/fake:
+  40 GeV 0.755/0.077, 0.759/0.042, 0.732/0.039; 91: 0.766/0.069, 0.778/0.042, 0.765/0.043;
+  160: 0.765/0.070, 0.782/0.048, 0.778/0.049; 240: 0.761/0.074, 0.782/0.052, 0.782/0.055;
+  365: 0.754/0.082, 0.777/0.064, 0.781/0.066; tt̄: 0.767/0.087, 0.790/0.073, 0.784/0.083.
+  v1 CLD-only already generalizes in efficiency to every energy; its deficit is fakes. v2
+  trades soft PROMPT tracks (0.77-0.83 vs 0.87-0.90 below 1 GeV; their hits are left as
+  background, not merged/split; present from epoch 5 on) for soft displaced ones, which by
+  truth origin are material secondaries and decays in flight (tt̄ finding: material 0.51 vs
+  0.35/0.41, in-flight 0.25 vs 0.13/0.15) while heavy flavour DROPS (0.929 vs 0.956/0.969).
+  Labels and vertex (no smearing anywhere) are identical across samples, so it is learned.
+  Fitted level (Genfit, 500 ev per energy + 300 tt̄, held-out; plots/trk_fit/v5/fitted/):
+  fit failures 8.1-11.4% of candidates; v2 highest at 91 GeV-tt̄ (9.2-11.4 vs 8.1-9.3: its
+  extra soft secondaries fail, 36% at 0.15 GeV in tt̄); > 1 GeV failures 0.2-1.2% for all.
+  Chain efficiency: mixed best or tied everywhere; v2's finding gain over v1 largely
+  disappears after the fit. Resolutions on the common sample are equal across the three
+  (hit content of commonly found particles is the same). Of particles whose candidate fails
+  in one model, ~20-30% are fitted by another model's candidate, 25-60% fail again.
+  Pipeline: write_mltracks/run_genfit take several finders per file and fit pass.
+
 ## Roadmap (user, 2026-10-13 — the plan for the next sessions, in order)
 
 1. **Genfit-only refactor** (prerequisite hygiene). DONE 2026-10-15: helix-fit removal,

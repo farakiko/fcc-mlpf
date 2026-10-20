@@ -31,6 +31,21 @@ python states_to_parquet.py --input <fitted> --output <fitted_tracks.parquet>
 python analyze_fitted.py --detector cld --chain "mixed-detector training=fitted/*.root" --tag cld
 ```
 
+Several finders can share one pass over the files: step B writes one named collection per
+step-A label file, step C runs one fitter instance per collection (the baseline tracks can be
+refitted in the same pass), and step E selects each chain's collections with `@CAND,FIT`.
+The ROOT I/O, which dominates the cost, is then paid once instead of once per finder:
+
+```bash
+python write_mltracks.py --detector cld --input <rec> --output <rec_ml> \
+    --labels MLTracks_a=labels_a/<f>.labels.npz --labels MLTracks_b=labels_b/<f>.labels.npz
+k4run run_genfit.py --detector cld --inputFile <rec_ml> --outputFile <fitted> \
+    --inputTracks MLTracks_a,MLTracks_b,SiTracks_Refitted \
+    --outputTracks GenfitTracks_a,GenfitTracks_b,GenfitBaseTracks
+python analyze_fitted.py --detector cld --baseline none --tag cld \
+    --chain "a=fitted/*.root@MLTracks_a,GenfitTracks_a" --chain "b=fitted/*.root@MLTracks_b,GenfitTracks_b"
+```
+
 ### Hit provenance
 
 The model sees an event as a list of hit rows, in the order the detector's postprocessing
