@@ -56,8 +56,9 @@ def load_runs(specs):
     return labels, {s: [p[s] for p in per_run] for s in samples}
 
 
-def sample_page(plt, labels, runs, sample, with_base):
-    edges = runs[0]["edges"]; ctr = np.sqrt(edges[:-1] * edges[1:])
+def sample_page(plt, labels, runs, sample, with_base, pt_min):
+    edges = runs[0]["edges"]
+    ctr = np.where(edges[:-1] >= pt_min - 1e-9, np.sqrt(edges[:-1] * edges[1:]), np.nan)
     for lab, d in zip(labels, runs):
         assert np.allclose(edges, d["edges"]), f"{lab}: different pT binning"
         assert int(d["n_ev"]) == int(runs[0]["n_ev"]), f"{lab}: different number of {sample} events"
@@ -112,6 +113,7 @@ def main():
                          "(repeat; order = legend order)")
     ap.add_argument("--tag", default="cld", help="tag for the filename")
     ap.add_argument("--no-baseline", action="store_true", help="omit the baseline tracking curves")
+    ap.add_argument("--pt-min", type=float, default=0.5, help="first plotted pT bin edge [GeV]")
     ap.add_argument("--out", default=os.path.normpath(os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "plots", "trk_fit")))
     args = ap.parse_args()
@@ -127,7 +129,7 @@ def main():
         if len(per_sample) > 1:
             fig = summary_page(plt, labels, per_sample, with_base); pdf.savefig(fig); plt.close(fig)
         for s, runs in per_sample.items():
-            fig = sample_page(plt, labels, runs, s, with_base); pdf.savefig(fig); plt.close(fig)
+            fig = sample_page(plt, labels, runs, s, with_base, args.pt_min); pdf.savefig(fig); plt.close(fig)
 
     w = max(len(l) for l in labels + ["baseline tracking"])
     for s, runs in per_sample.items():

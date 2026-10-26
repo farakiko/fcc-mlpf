@@ -239,13 +239,18 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   truth origin are material secondaries and decays in flight (tt̄ finding: material 0.51 vs
   0.35/0.41, in-flight 0.25 vs 0.13/0.15) while heavy flavour DROPS (0.929 vs 0.956/0.969).
   Labels and vertex (no smearing anywhere) are identical across samples, so it is learned.
-  Fitted level (Genfit, 500 ev per energy + 300 tt̄, held-out; plots/trk_fit/v5/fitted/):
-  fit failures 8.1-11.4% of candidates; v2 highest at 91 GeV-tt̄ (9.2-11.4 vs 8.1-9.3: its
-  extra soft secondaries fail, 36% at 0.15 GeV in tt̄); > 1 GeV failures 0.2-1.2% for all.
-  Chain efficiency: mixed best or tied everywhere; v2's finding gain over v1 largely
-  disappears after the fit. Resolutions on the common sample are equal across the three
-  (hit content of commonly found particles is the same). Of particles whose candidate fails
-  in one model, ~20-30% are fitted by another model's candidate, 25-60% fail again.
+  Fitted level (Genfit, held-out 2000 ev per energy + 1000 tt̄, 2026-10-21; plots/trk_fit/v6/
+  physics_v1_mixed_v2.pdf; genfit/run_chain.sh): fit failures v1/mixed/v2 10.5/10.5/10.6%
+  (40 GeV), 8.9/9.2/9.7 (91), 8.5/8.5/9.4 (160), 8.3/8.4/9.8 (240), 8.3/8.5/10.1 (365),
+  8.6/9.4/11.5 (tt̄); > 1 GeV pure candidates fail < 1.2% for all; v2's extra soft
+  secondaries fail (37% at 0.15 GeV in tt̄ vs 24/28%). Chain eff (found + converged)
+  0.687/0.685/0.661, 0.709/0.715/0.699, 0.716/0.729/0.716, 0.714/0.728/0.719,
+  0.713/0.728/0.721, 0.723/0.738/0.719: mixed best or tied everywhere, v2 <= v1 except
+  240-365 GeV (+0.5-0.8). Fake (converged) v1 0.050-0.061, mixed/v2 0.029-0.048. Resolutions
+  and d0 pulls identical across the three; HF-vs-prompt ROC (tt̄) at 1% mistag own/common/
+  absolute 0.682/0.703/0.657, 0.682/0.706/0.664, 0.683/0.704/0.649; tt̄ chain eff by origin
+  prompt 0.909/0.913/0.864, b/c/tau 0.944/0.956/0.920. Of particles whose candidate fails in
+  one model, ~20-30% are fitted by another model's candidate, 25-60% fail again.
   Pipeline: write_mltracks/run_genfit take several finders per file and fit pass.
 
 ## Roadmap (user, 2026-10-13 — the plan for the next sessions, in order)

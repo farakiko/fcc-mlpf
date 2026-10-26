@@ -46,6 +46,23 @@ python analyze_fitted.py --detector cld --baseline none --tag cld \
     --chain "a=fitted/*.root@MLTracks_a,GenfitTracks_a" --chain "b=fitted/*.root@MLTracks_b,GenfitTracks_b"
 ```
 
+`run_chain.sh` runs steps A–C this way for several checkpoints over a list of source files
+of one sample, and with `-E` step E and `compare_fit_failures.py` (for the particles whose
+candidate fails to fit in one model: what the other models' candidates do). Every step is
+skip-if-exists, and several machines can share one work directory (files are claimed
+atomically). `summarize_samples.py` then collects the per-sample tables into one figure, and
+`plot_physics.py` makes the per-sample physics PDF from the arrays `analyze_fitted.py` saves:
+fit failures, efficiency vs true pT and fake rate vs fitted pT, pT resolution, and both split
+into prompt and displaced (efficiency and resolution by true |d0|; fakes, which have no truth,
+by fitted |d0/σ(d0)| < 3 or > 3), every pT axis from 0.5 GeV.
+
+```bash
+export TORCH_PY=<python with torch>          # KEY4HEP_SETUP defaults to the pinned nightly
+run_chain.sh -d cld -w work/cld_91gev -f files_91gev.txt -j 6 -E \
+    -m v1=t_cld90k/best.pt -m v2=t_cld_all/ep_019.pt -L "v1=v1 CLD-only" -L "v2=v2 CLD-only"
+python summarize_samples.py --tables work/*/analysis/fitted_*.txt --out fitted_summary.pdf
+```
+
 ### Hit provenance
 
 The model sees an event as a list of hit rows, in the order the detector's postprocessing

@@ -36,7 +36,8 @@ Output (--outdir): fitted_eff_<tag>.pdf (chain/finding efficiency vs true pT, fa
 Genfit pT, fit-failure rate), fitted_res_<tag>.pdf (own sample: d0/z0/pT resolution, d0
 pull width, d0 significance, ROC), fitted_common_<tag>.pdf (common sample: resolutions,
 pull width, ROC; absolute ROC), fitted_<tag>.txt (tables, incl. signal efficiency at 1%
-mistag in the three views), and per chain candidates_<tag>_<chain>.parquet: one row per
+mistag in the three views), fitted_arrays_<tag>.npz (per-particle, per-track and per-candidate
+arrays for plot_physics.py), and per chain candidates_<tag>_<chain>.parquet: one row per
 candidate (fit status, hit counts, purity, dominant-owner truth) -- the input of fit-failure
 studies (fit_failure_study.py).
 
@@ -94,7 +95,7 @@ def converged(st):
 def new_acc():
     nb = len(EFF_EDGES) - 1
     a = {k: np.zeros(nb) for k in ("gt", "found", "chain", "fit", "fit_fake", "own", "own_fail")}
-    a.update(parts=[], rows=[], n_cand=0, n_conv=0, n_conv_fake=0)
+    a.update(parts=[], rows=[], trk=[], n_cand=0, n_conv=0, n_conv_fake=0)
     return a
 
 
@@ -156,6 +157,7 @@ def process(files, cfg, cand_name, fit_name, B, a):
                 st = states[fidx[k]] if fidx[k] is not None else None
                 if conv[k]:
                     a["n_conv_fake"] += k not in found
+                    a["trk"].append((pt_from_omega(st["par"][2], B), st["par"][0], st["sig"][0], k not in found))
                     bi = np.searchsorted(EFF_EDGES, pt_from_omega(st["par"][2], B)) - 1
                     if 0 <= bi < len(EFF_EDGES) - 1:
                         a["fit"][bi] += 1; a["fit_fake"][bi] += k not in found
@@ -222,6 +224,8 @@ def main():
                     help="prompt/displaced definition for the ROC: true |d0| thresholds, or the "
                          "truth origin (metrics.origin_class: prompt vs b/c/tau decay)")
     ap.add_argument("--max-files", type=int, default=0, help="per chain; 0 = all")
+    ap.add_argument("--pt-min", type=float, default=0.5,
+                    help="pT plots start at this bin edge [GeV] (tables keep every bin)")
     ap.add_argument("--tag", default="cld")
     ap.add_argument("--outdir", default=os.path.normpath(os.path.join(HERE, "..", "..", "..", "..",
                                                                       "plots", "trk_fit")))
@@ -363,12 +367,32 @@ def main():
     print(txt)
     with open(os.path.join(args.outdir, f"fitted_{args.tag}.txt"), "w") as fh:
         fh.write(txt + "\n")
+    # per-object arrays for the physics plots (plot_physics.py), per chain j:
+    #   p_*  truth particles: true pT, true d0, production radius, found, chain (found + fit
+    #        converged), fitted pT (nan unless chain)
+    #   t_*  converged tracks: fitted pT, fitted d0 / sigma(d0), fake (no DM-matched particle)
+    #   c_*  candidates: converged, purity, dominant-owner true pT
+    arr = {}
+    for j, l in enumerate(labels):
+        ps, tr, rw = acc[l]["parts"], acc[l]["trk"], acc[l]["rows"]
+        arr.update({
+            f"p_pt_{j}": np.array([p["pt"] for p in ps]), f"p_d0_{j}": np.array([p["y"][0] for p in ps]),
+            f"p_r_{j}": np.array([p["r"] for p in ps]), f"p_found_{j}": np.array([p["found"] for p in ps]),
+            f"p_chain_{j}": np.array([p["par"] is not None for p in ps]),
+            f"p_ptfit_{j}": np.array([pt_from_omega(p["par"][2], B) if p["par"] is not None else np.nan for p in ps]),
+            f"t_pt_{j}": np.array([t[0] for t in tr]), f"t_d0sig_{j}": np.array([t[1] / max(t[2], 1e-12) for t in tr]),
+            f"t_fake_{j}": np.array([t[3] for t in tr], bool),
+            f"c_conv_{j}": np.array([r[5] for r in rw], bool), f"c_purity_{j}": np.array([r[9] for r in rw]),
+            f"c_ownpt_{j}": np.array([r[10] for r in rw])})
+    np.savez_compressed(os.path.join(args.outdir, f"fitted_arrays_{args.tag}.npz"), tag=args.tag,
+                        labels=np.array(labels), max_prod_r=args.max_prod_r, **arr)
 
     # ---------------- plots ----------------
     import matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     FS = 13
-    ectr = np.sqrt(EFF_EDGES[:-1] * EFF_EDGES[1:])
+    ectr = np.where(EFF_EDGES[:-1] >= args.pt_min - 1e-9, np.sqrt(EFF_EDGES[:-1] * EFF_EDGES[1:]), np.nan)
+    rctr_p = np.where(RES_EDGES[:-1] >= args.pt_min - 1e-9, rctr, np.nan)    # plotted bins only
     ratio = lambda n, d, nmin=20: np.where(d > nmin, n / np.maximum(d, 1), np.nan)
     fig, axes = plt.subplots(1, 3, figsize=(18, 4.8))
     for l in labels:
@@ -401,7 +425,7 @@ def main():
                 v = 100 * (d["P"][:, 2] / d["Y"][:, 2] - 1) if col == 2 else 1e3 * (d["P"][:, col] - d["Y"][:, col])
                 ys = [iqr_sigma(v[(d["PT"] >= RES_EDGES[j]) & (d["PT"] < RES_EDGES[j + 1])], 30)
                       for j in range(len(rctr))]
-                ax.plot(rctr, ys, style[l][1], color=style[l][0], label=l)
+                ax.plot(rctr_p, ys, style[l][1], color=style[l][0], label=l)
             ax.set_xscale("log"); ax.set_yscale("log")
             ax.set_xlabel("true $p_T$ [GeV]", fontsize=FS); ax.set_ylabel(lab, fontsize=FS)
             ax.legend(fontsize=FS - 3); ax.grid(alpha=0.3, which="both")
@@ -412,7 +436,7 @@ def main():
             if not len(d["PT"]):
                 continue
             pu = (d["P"][:, 0] - d["Y"][:, 0]) / np.clip(d["S"][:, 0], 1e-12, None)
-            ax.plot(rctr, [iqr_sigma(pu[(d["PT"] >= RES_EDGES[j]) & (d["PT"] < RES_EDGES[j + 1])], 30)
+            ax.plot(rctr_p, [iqr_sigma(pu[(d["PT"] >= RES_EDGES[j]) & (d["PT"] < RES_EDGES[j + 1])], 30)
                            for j in range(len(rctr))], style[l][1], color=style[l][0], label=l)
         ax.axhline(1, color="k", ls=":")
         ax.set_xscale("log"); ax.set_xlabel("true $p_T$ [GeV]", fontsize=FS)
