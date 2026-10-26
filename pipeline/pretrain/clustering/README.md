@@ -10,5 +10,8 @@ pf_foundation_plan.md §1a):
 3. **material-scaled inputs** (depth in X0/λ, transverse in Molière-radius units) +
    per-slot energy/position regression heads.
 One joint [C] over ECAL+HCAL+muon hits (decided). Track-blind in pretraining.
-Labels: CLD hit→MC calo links. Baselines: Pandora clusters (hit-level DM), DPC.
-Blocked on: extending the canonical schema with `chit_*` columns + the CLD adapter.
+Truth objects, labels, matching and metrics follow HitPF (arXiv:2603.04084); the full design
+with measured numbers is `DESIGN.md` (2026-10-26). Baselines: Pandora clusters, HitPF
+(object condensation + DPC) retrained on calorimeter hits.
+Data: the canonical schema carries the calorimeter group since v0.3 (`chit_*`, `clink_*`,
+`mc_calomother`; `postprocessing/cld.py --calo`).

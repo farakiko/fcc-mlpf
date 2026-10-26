@@ -4,7 +4,11 @@ CLD adapter: REC EDM4hep (production/cld) -> canonical training parquet
 (no framework). Keeps the FULL MCParticles block (indices = podio rows, so no remap).
 
 Usage:  python cld.py REC1.edm4hep.root [REC2...] out_canonical.parquet \
-            [--detector CLD_o2_v08] [--b-tesla 2.0] [--stack key4hep-2026-04-08]
+            [--detector CLD_o2_v08] [--b-tesla 2.0] [--stack key4hep-2026-04-08] [--calo]
+
+--calo adds the calorimeter group (stage [C]; postprocessing/README.md): calorimeter and
+muon-system hits, their fractional truth links, Pandora cluster membership, and per MC
+particle its calorimeter mother (HitPF's truth object, see calo_mother()).
 """
 import argparse
 import os
@@ -27,6 +31,18 @@ CHAIN = [
     ("OTrackerEndcapHits",   "OuterTrackerEndcapHitsRelations", "OuterTrackerEndcapCollection", 5),
 ]
 TRACKS = "SiTracks_Refitted"
+# calorimeter + muon-system hit collections, in row order
+CALO_DIGI = ["ECALBarrel", "ECALEndcap", "HCALBarrel", "HCALEndcap", "HCALOther", "MUON"]
+CALO_LINK = "CalohitMCTruthLink"
+PANDORA = "PandoraClusters"
+# CalorimeterHit.type = caloType + 10*caloID + 1000*layout + 10000*layer (Marlin CHT encoding,
+# written by the CLD digitizers): (caloID, layout) -> canonical calo role (schema.CALO_ROLES)
+CHT_ROLE = {(1, 1): 0, (1, 2): 1, (2, 1): 2, (2, 2): 3, (2, 4): 4, (3, 1): 5, (3, 2): 6}
+CHT_MODALITY = {1: 0, 2: 1, 3: 2}                 # caloID -> schema.CALO_MODALITIES
+# calorimeter face (CLD_o2_v08.xml): ECal barrel dodecagon, inner apothem, face normals at
+# k*30 deg (checked on layer-0 hits: all at 2152.4 mm along a normal); ECal endcap front
+CALO_FACE = dict(apothem=2150.0, nsides=12, endcap_z=2307.0)
+BIT_BACKSCATTER, BIT_DECAYED_IN_TRACKER = 29, 27  # edm4hep MCParticle simulatorStatus bits
 WIRE_ZERO = ["thit_wire_stereo", "thit_wire_azim", "thit_drift", "thit_drift_err",
              "thit_alongwire_err", "thit_left_x", "thit_left_y", "thit_left_z",
              "thit_right_x", "thit_right_y", "thit_right_z"]
@@ -43,7 +59,85 @@ def collection_ids(f):
     return {str(n): int(i) for n, i in zip(names, ids)}
 
 
-def read_file(fp):
+def produced_in_calo(vx, vy, vz, face=CALO_FACE):
+    """Production vertex beyond the calorimeter face (outside the barrel polygon or beyond
+    the endcap front plane)."""
+    a = 2 * np.pi * np.arange(face["nsides"]) / face["nsides"]
+    out = (np.outer(vx, np.cos(a)) + np.outer(vy, np.sin(a)) > face["apothem"]).any(1)
+    return out | (np.abs(vz) > face["endcap_z"])
+
+
+def calo_mother(parent, vx, vy, vz, simstatus, face=CALO_FACE):
+    """Per MC particle, the row of its calorimeter mother: HitPF's truth object, "the MC
+    particle at the entrance of the calorimeter" (development repo,
+    data_generation/preprocessing/utils.py::correct_link). Walk up the first-parent chain
+    while the particle was produced inside the calorimeter, except that a particle flagged
+    backscattered and not decayed in the tracker stops the walk (an object of its own)."""
+    inside = produced_in_calo(vx, vy, vz, face)
+    ss = simstatus.astype(np.int64)
+    stop = ((ss >> BIT_BACKSCATTER) & 1).astype(bool) & ~((ss >> BIT_DECAYED_IN_TRACKER) & 1).astype(bool)
+    up = inside & ~stop & (parent >= 0)
+    out = np.arange(len(parent))
+    for k in np.where(up)[0]:
+        j, n = k, 0
+        while up[j] and n < len(parent):                 # n: guard against a parent cycle
+            j, n = parent[j], n + 1
+        out[k] = j
+    return out
+
+
+def read_calo(arr, i, name2id, K):
+    """Calorimeter group of event i (schema.CALO columns except mc_calomother)."""
+    c = {k: [] for k in ["chit_x", "chit_y", "chit_z", "chit_e", "chit_time", "chit_role",
+                         "chit_modality", "chit_layer"]}
+    rows, base = {}, 0
+    for d in CALO_DIGI:
+        e = np.asarray(arr(f"{d}/{d}.energy")[i]); n = len(e)
+        ty = np.asarray(arr(f"{d}/{d}.type")[i]).astype(np.int64)
+        cid, lay = (ty // 10) % 10, (ty // 1000) % 10
+        c["chit_role"].append(np.array([CHT_ROLE[(a, b)] for a, b in zip(cid, lay)], np.int64))
+        c["chit_modality"].append(np.array([CHT_MODALITY[a] for a in cid], np.int64))
+        c["chit_layer"].append(ty // 10000)
+        c["chit_e"].append(e)
+        c["chit_time"].append(np.asarray(arr(f"{d}/{d}.time")[i]))
+        for ax in "xyz":
+            c[f"chit_{ax}"].append(np.asarray(arr(f"{d}/{d}.position.{ax}")[i]))
+        rows[name2id[d]] = base; base += n
+    c = {k: np.concatenate(v) if v else np.zeros(0) for k, v in c.items()}
+    nc = base
+    # truth: CalohitMCTruthLink weights split the calibrated hit energy among the particles;
+    # merged per (hit, particle) and normalized per hit -> fractions; chit_mc = largest
+    fi = np.asarray(arr(f"_{CALO_LINK}_from/_{CALO_LINK}_from.index")[i]).astype(np.int64)
+    fc = np.asarray(arr(f"_{CALO_LINK}_from/_{CALO_LINK}_from.collectionID")[i])
+    lm = np.asarray(arr(f"_{CALO_LINK}_to/_{CALO_LINK}_to.index")[i]).astype(np.int64)
+    lw = np.asarray(arr(f"{CALO_LINK}/{CALO_LINK}.weight")[i]).astype(np.float64)
+    off = np.array([rows.get(int(x), -1) for x in fc], np.int64)
+    ok = (off >= 0) & (lm >= 0) & (lm < K) & (lw > 0)
+    hit = off[ok] + fi[ok]
+    key, inv = np.unique(hit * K + lm[ok], return_inverse=True)
+    w = np.bincount(inv, weights=lw[ok])
+    lh, lmc = key // K, key % K
+    frac = w / np.bincount(lh, weights=w, minlength=nc)[lh]
+    best = np.full(nc, -1, np.int64); bf = np.full(nc, -1.0)
+    for h, m_, f_ in zip(lh, lmc, frac):
+        if f_ > bf[h]:
+            bf[h], best[h] = f_, m_
+    c.update(chit_mc=best, clink_hit=lh, clink_mc=lmc, clink_frac=frac)
+    # baseline: Pandora cluster membership (every hit is in at most one cluster)
+    beg = np.asarray(arr(f"{PANDORA}/{PANDORA}.hits_begin")[i])
+    end = np.asarray(arr(f"{PANDORA}/{PANDORA}.hits_end")[i])
+    pi = np.asarray(arr(f"_{PANDORA}_hits/_{PANDORA}_hits.index")[i]).astype(np.int64)
+    pc = np.asarray(arr(f"_{PANDORA}_hits/_{PANDORA}_hits.collectionID")[i])
+    pan = np.full(nc, -1, np.int64)
+    for k in range(len(beg)):
+        for j in range(beg[k], end[k]):
+            if int(pc[j]) in rows:
+                pan[rows[int(pc[j])] + pi[j]] = k
+    c["chit_pandora"] = pan
+    return c
+
+
+def read_file(fp, calo=False):
     """-> list of canonical event dicts; events without tracker hits are skipped, so each
     dict carries its source entry number as e["event"] (not a schema column)."""
     f = uproot.open(fp)
@@ -150,6 +244,10 @@ def read_file(fp):
             if a < T and w > bw[a]:
                 bw[a] = w; bm[a] = c
         e["btrack_mc"] = bm
+        if calo:
+            e.update(read_calo(arr, i, name2id, K))
+            e["mc_calomother"] = calo_mother(e["mc_parent"], e["mc_vx"], e["mc_vy"], e["mc_vz"],
+                                             e["mc_simstatus"])
         e["event"] = i
         events.append(e)
     return events
@@ -162,15 +260,17 @@ def main():
     ap.add_argument("--detector", default="CLD_o2_v08")
     ap.add_argument("--b-tesla", type=float, default=2.0)
     ap.add_argument("--stack", default="key4hep-2026-04-08")
+    ap.add_argument("--calo", action="store_true", help="add the calorimeter group (stage [C])")
     args = ap.parse_args()
     events = []
     for fp in args.inputs:
-        events += read_file(fp)
+        events += read_file(fp, calo=args.calo)
         print(f"  {os.path.basename(fp)}: cum {len(events)} events", flush=True)
     meta = dict(schema_version=SCHEMA_VERSION, detector=args.detector, B_tesla=args.b_tesla,
                 stack=args.stack, source=f"cld.py<-{len(args.inputs)} files")
     n = write_events(args.output, events, meta)
-    print(f"wrote {args.output}: {n} events, {sum(len(e['thit_x']) for e in events)} hits")
+    print(f"wrote {args.output}: {n} events, {sum(len(e['thit_x']) for e in events)} tracker hits"
+          + (f", {sum(len(e['chit_e']) for e in events)} calo hits" if args.calo else ""))
 
 
 if __name__ == "__main__":

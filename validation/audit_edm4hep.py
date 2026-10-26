@@ -162,8 +162,10 @@ def audit(fp, det, quick=False):
             if L not in stored:
                 continue
             w = t[f"{L}/{L}.weight"].array(entry_stop=3)
-            fro = np.asarray(ak.flatten(t[f"_{L}_from/_{L}_from.index"].array(entry_stop=1)))
-            u, c = np.unique(fro, return_counts=True)
+            # a hit is (collectionID, index): indices restart in every calo collection
+            fro = np.asarray(ak.flatten(t[f"_{L}_from/_{L}_from.index"].array(entry_stop=1)), np.int64)
+            fcid = np.asarray(ak.flatten(t[f"_{L}_from/_{L}_from.collectionID"].array(entry_stop=1)), np.int64)
+            u, c = np.unique(np.stack([fcid, fro], 1), axis=0, return_counts=True)
             print(f"  [OK ] {L}: {sum(len(x) for x in w)} links (3 ev), "
                   f"{100*(c>1).mean():.1f}% multi-link hits (fractional truth), "
                   f"weights [{float(ak.min(w)):.2f}, {float(ak.max(w)):.2f}]")

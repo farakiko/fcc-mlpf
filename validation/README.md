@@ -47,7 +47,7 @@ member names, not historical spellings** — we once mis-declared `trackStates` 
 | collection | type | why |
 |---|---|---|
 | `ECALBarrel`, `ECALEndcap`, `HCALBarrel`, `HCALEndcap`, `HCALOther`, `MUON` | CalorimeterHit | **model input**: digitized calo + muon hits |
-| `CalohitMCTruthLink` | link w/ weight | **truth**: hit → MCParticle; multi-link hits (~13%) with weights = the **fractional energy-sharing** labels |
+| `CalohitMCTruthLink` | link w/ weight | **truth**: hit → MCParticle; weights split the calibrated hit energy among the contributing particles; multi-link hits (0.5% of hits, 1.5% of the energy in tt̄ @ 365 GeV) = the **fractional energy-sharing** labels |
 | `ECalBarrelCollection`, `ECalEndcapCollection`, `HCalBarrelCollection`, `HCalEndcapCollection`, `HCalRingCollection`*, `YokeBarrelCollection`*, `YokeEndcapCollection`* (+ each `...Contributions`) | SimCalorimeterHit | **full MC energy decomposition** per cell (sub-hit contributions) — ground truth for fractional assignment beyond the link weights. *Names with * as present in the detector model.* |
 | `PandoraClusters` (+ `_PandoraClusters_hits`) | Cluster | **baseline clustering** — hit-level double-majority comparison needs the hit relation |
 

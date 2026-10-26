@@ -15,12 +15,17 @@ import awkward as ak
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-SCHEMA_VERSION = "0.2"
+SCHEMA_VERSION = "0.3"            # 0.3 = 0.2 + the optional calorimeter group (chit_*, clink_*)
+COMPATIBLE_VERSIONS = ("0.2", "0.3")
 
 ROLES = {0: "vtx-barrel", 1: "vtx-endcap", 2: "inner-barrel", 3: "inner-endcap",
          4: "outer-barrel", 5: "outer-endcap", 6: "drift-chamber",
          7: "siwrapper-barrel", 8: "siwrapper-disk"}
 MODALITIES = {0: "silicon-point", 1: "wire-drift"}
+# calorimeter / muon-system hits: detector-global roles and readout technologies (ids never reused)
+CALO_ROLES = {0: "ecal-barrel", 1: "ecal-endcap", 2: "hcal-barrel", 3: "hcal-endcap",
+              4: "hcal-ring", 5: "muon-barrel", 6: "muon-endcap"}
+CALO_MODALITIES = {0: "sampling-si-w", 1: "sampling-scint-steel", 2: "muon-chamber"}
 
 THIT = ["thit_x", "thit_y", "thit_z", "thit_role", "thit_modality",
         "thit_edep", "thit_edep_err", "thit_time",
@@ -36,9 +41,17 @@ THIT = ["thit_x", "thit_y", "thit_z", "thit_role", "thit_modality",
 MC = ["mc_pdg", "mc_charge", "mc_px", "mc_py", "mc_pz", "mc_e", "mc_m",
       "mc_vx", "mc_vy", "mc_vz", "mc_genstatus", "mc_simstatus", "mc_parent"]
 BASE = ["bhit_track", "btrack_mc"]              # optional group (detectors with a baseline)
+# optional calorimeter group (stage [C]): per-hit columns, per-link fractional truth, and the
+# per-MC-particle calorimeter mother (the [C] truth object of every MC particle)
+CHIT = ["chit_x", "chit_y", "chit_z", "chit_e", "chit_time", "chit_role", "chit_modality",
+        "chit_layer", "chit_mc", "chit_pandora"]
+CLINK = ["clink_hit", "clink_mc", "clink_frac"]
+CALO = CHIT + CLINK + ["mc_calomother"]
 INT_COLS = {"thit_role", "thit_modality", "thit_mc", "thit_secondary", "thit_overlay",
             "thit_nclusters", "mc_pdg", "mc_genstatus", "mc_simstatus", "mc_parent",
-            "bhit_track", "btrack_mc"}
+            "bhit_track", "btrack_mc",
+            "chit_role", "chit_modality", "chit_layer", "chit_mc", "chit_pandora",
+            "clink_hit", "clink_mc", "mc_calomother"}
 META_KEYS = ["schema_version", "detector", "B_tesla", "stack", "source"]
 
 
@@ -58,7 +71,8 @@ def write_events(path, events, meta, row_group_size=25):
     missing = [k for k in META_KEYS if k not in meta]
     if missing:
         raise ValueError(f"metadata missing keys: {missing}")
-    cols = THIT + MC + (BASE if all(c in events[0] for c in BASE) else [])
+    cols = (THIT + MC + (BASE if all(c in events[0] for c in BASE) else [])
+            + (CALO if all(c in events[0] for c in CALO) else []))
     data = {}
     for c in cols:
         dt = np.int64 if c in INT_COLS else np.float32
@@ -79,8 +93,8 @@ def audit_parquet(path, nsample=5):
     for k in META_KEYS:
         if k not in md:
             problems.append(f"metadata missing: {k}")
-    if md.get("schema_version") not in (None, SCHEMA_VERSION):
-        problems.append(f"schema_version {md.get('schema_version')} != {SCHEMA_VERSION}")
+    if md.get("schema_version") not in (None,) + COMPATIBLE_VERSIONS:
+        problems.append(f"schema_version {md.get('schema_version')} not in {COMPATIBLE_VERSIONS}")
     names = set(t.column_names)
     for c in THIT + MC:
         if c not in names:
@@ -88,6 +102,11 @@ def audit_parquet(path, nsample=5):
     if problems:
         return problems, md, t.num_rows
     has_base = all(c in names for c in BASE)
+    has_calo = any(c in names for c in CALO)
+    if has_calo:
+        miss = [c for c in CALO if c not in names]
+        if miss:                                  # the calo group is all-or-nothing
+            return problems + [f"calo group incomplete, missing: {miss}"], md, t.num_rows
     n = min(nsample, t.num_rows)
     for i in range(n):
         role = np.asarray(t.column("thit_role")[i].as_py())
@@ -112,7 +131,52 @@ def audit_parquet(path, nsample=5):
         for c in THIT:
             if len(t.column(c)[i].as_py()) != nh:
                 problems.append(f"ev{i}: {c} length != n_hits"); break
+        if has_calo:
+            problems += [f"ev{i}: {p}" for p in _audit_calo(t, i, K)]
     return problems, md, t.num_rows
+
+
+def _audit_calo(t, i, K):
+    """Consistency of one event's calorimeter group (see README, calorimeter-hit columns)."""
+    g = {c: np.asarray(t.column(c)[i].as_py()) for c in CALO}
+    out, nc = [], len(g["chit_e"])
+    if any(len(g[c]) != nc for c in CHIT):
+        return ["chit_* columns of different lengths"]
+    if any(len(g[c]) != len(g["clink_hit"]) for c in CLINK):
+        return ["clink_* columns of different lengths"]
+    if len(g["mc_calomother"]) != K:
+        return ["mc_calomother length != n_mc"]
+    if nc:
+        if not set(np.unique(g["chit_role"])) <= set(CALO_ROLES):
+            out.append(f"unknown calo roles {set(np.unique(g['chit_role'])) - set(CALO_ROLES)}")
+        if not set(np.unique(g["chit_modality"])) <= set(CALO_MODALITIES):
+            out.append("unknown calo modalities")
+        if g["chit_mc"].max() >= K or g["chit_mc"].min() < -1:
+            out.append(f"chit_mc out of range [-1,{K})")
+        if g["chit_pandora"].min() < -1:
+            out.append("chit_pandora < -1")
+        if (g["chit_e"] <= 0).any():
+            out.append("chit_e <= 0")
+    cm = g["mc_calomother"]
+    if K and (cm.min() < 0 or cm.max() >= K or (cm[cm] != cm).any()):
+        out.append("mc_calomother not a valid idempotent map onto mc rows")
+    h, m, f = g["clink_hit"], g["clink_mc"], g["clink_frac"]
+    if len(h):
+        if h.min() < 0 or h.max() >= nc or m.min() < 0 or m.max() >= K:
+            out.append("clink_hit / clink_mc out of range")
+        elif (f <= 0).any() or (f > 1 + 1e-5).any():
+            out.append("clink_frac outside (0, 1]")
+        else:
+            s = np.bincount(h, weights=f, minlength=nc)
+            linked = np.bincount(h, minlength=nc) > 0
+            if np.abs(s[linked] - 1).max() > 1e-4:
+                out.append("clink_frac does not sum to 1 per linked hit")
+            # chit_mc = a largest-fraction particle of each linked hit (ties allowed), -1 if unlinked
+            fmax = np.zeros(nc); np.maximum.at(fmax, h, f)
+            fown = np.bincount(h, weights=f * (m == g["chit_mc"][h]), minlength=nc)
+            if (g["chit_mc"][~linked] != -1).any() or (fown[linked] < fmax[linked] - 1e-6).any():
+                out.append("chit_mc is not the largest-fraction particle of its hit")
+    return out
 
 
 def main():

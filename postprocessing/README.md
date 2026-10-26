@@ -12,14 +12,15 @@ production/<det>  →  EDM4hep ROOT  ──(adapter: cld.py / idea.py)──► 
 
 **The result:** one `.parquet` per input batch — one row per event, jagged columns
 (`thit_*` tracker hits incl. truth labels, `mc_*` particle block, `b*` baseline-finder
-labels where available), with file-level metadata (detector, B-field, software stack,
+labels where available, and optionally the `chit_*`/`clink_*` calorimeter group for stage
+[C]), with file-level metadata (detector, B-field, software stack,
 schema version). If `python schema.py file.parquet` prints `[OK] schema-compliant`,
 the file is trainable — regardless of which detector produced it.
 
 **Run it:**
 ```bash
-# CLD (reads REC EDM4hep directly; needs uproot/awkward/pyarrow)
-python cld.py  REC1.edm4hep.root [REC2...]  out.parquet  --detector CLD_o2_v08 --stack key4hep-2026-04-08
+# CLD (reads REC EDM4hep directly; needs uproot/awkward/pyarrow); --calo adds the [C] group
+python cld.py  REC1.edm4hep.root [REC2...]  out.parquet  --detector CLD_o2_v08 --stack key4hep-2026-04-08 [--calo]
 # IDEA, one step from digi ROOT (needs a key4hep env; chains the two steps below)
 ./idea_digi_to_parquet.sh digi.root out.parquet --stack sw-nightlies-2026-09-13
 # (or in two steps: production/idea process_tree.py -> graph parquet -> idea.py; the graph
@@ -58,6 +59,16 @@ The full schema definition, the detector-global role/modality enums, and the per
 
 `thit_modality`: 0 = silicon space point, 1 = wire/drift measurement.
 
+| `chit_role` | meaning | CLD | | `chit_modality` | meaning | CLD |
+|---:|---|:-:|---|---:|---|:-:|
+| 0 | ECAL barrel | ✓ | | 0 | sampling, silicon–tungsten | ECAL |
+| 1 | ECAL endcap | ✓ | | 1 | sampling, scintillator–steel | HCAL |
+| 2 | HCAL barrel | ✓ | | 2 | muon chamber | yoke |
+| 3 | HCAL endcap | ✓ | | | | |
+| 4 | HCAL ring | ✓ | | | | |
+| 5 | muon barrel | ✓ | | | | |
+| 6 | muon endcap | ✓ | | | | |
+
 ## Tracker-hit columns (`thit_*`)
 
 | column | applies to | definition |
@@ -86,7 +97,27 @@ Only particles referenced by hits (or their stored parents) are kept; `thit_mc` 
 Baseline finder (where one exists — CLD only today): `bhit_track` (hit → baseline-track id,
 −1 unassigned), `btrack_mc` (baseline track → mc row, −1 fake).
 
-Parquet file metadata (key-value): `schema_version` (`0.2`), `detector`, `B_tesla`,
+## Calorimeter group (`chit_*`, `clink_*`, `mc_calomother`; optional, all or none)
+
+Stage [C] input and truth (`pipeline/pretrain/clustering/DESIGN.md`). Calorimeter and
+muon-system hits share one row index.
+
+| column | per | definition |
+|---|---|---|
+| `chit_x/y/z` | hit | hit position [mm] |
+| `chit_e`, `chit_time` | hit | calibrated hit energy [GeV], time [ns] |
+| `chit_role`, `chit_modality` | hit | enums above |
+| `chit_layer` | hit | layer index inside its subdetector (0 = innermost) |
+| `chit_mc` | hit | row of the MC particle with the largest energy fraction of the hit (−1 = no truth link) |
+| `chit_pandora` | hit | baseline: index of the Pandora cluster holding the hit (−1 = none) |
+| `clink_hit`, `clink_mc`, `clink_frac` | link | fractional truth: hit row, MC row, the particle's fraction of the hit energy (sums to 1 per linked hit) |
+| `mc_calomother` | MC particle | row of the particle's calorimeter mother = the [C] truth object (HitPF): walk up the parents while produced inside the calorimeter; a backscattered particle not decayed in the tracker is its own mother |
+
+The truth object of a hit is `mc_calomother[chit_mc]`. The calorimeter-face geometry used by
+the walk is a detector fact and lives in the adapter.
+
+Parquet file metadata (key-value): `schema_version` (`0.3`; `0.2` files, without the
+calorimeter group, remain valid), `detector`, `B_tesla`,
 `stack`, `source` (producer + source-file id).
 
 ## Naming convention: IDEA (De Vita graph parquet) → canonical
@@ -134,6 +165,11 @@ The CLD adapter (`postprocessing/cld.py`) reads REC files directly (no intermedi
 | `SimTrackerHit` truth | `thit_true_*`, `thit_true_p*`, `thit_pathlen`, `thit_secondary` | copy (`thit_overlay`=0) |
 | `MCParticles.*` | `mc_*` | direct (momentum already px/py/pz) |
 | `SiTracks_Refitted` trackerHits / `SiTracksMCTruthLink` | `bhit_track`, `btrack_mc` | hit-set + best-weight link |
+| `{ECAL,HCAL}{Barrel,Endcap}`, `HCALOther`, `MUON` (in this order) | `chit_x/y/z`, `chit_e`, `chit_time` | copy (`--calo`) |
+| CalorimeterHit `.type` = caloType + 10·caloID + 1000·layout + 10000·layer | `chit_role`, `chit_modality`, `chit_layer` | decoded (caloID, layout) → role; caloID → modality |
+| `CalohitMCTruthLink` (weights split the hit energy among particles) | `clink_*`, `chit_mc` | merged per (hit, particle), normalized per hit; largest fraction |
+| `PandoraClusters` hits | `chit_pandora` | hit → cluster index |
+| MC vertex, parents, simulatorStatus + calorimeter face (ECal barrel apothem 2150 mm, 12 sides, endcap front 2307 mm) | `mc_calomother` | ancestor walk (`cld.py::calo_mother`); identical to HitPF's `correct_link` on 49,851 particles of 100 tt̄ events |
 
 ## Rules for a new detector
 
