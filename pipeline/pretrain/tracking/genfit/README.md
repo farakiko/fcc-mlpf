@@ -51,8 +51,8 @@ of one sample, and with `-E` step E and `compare_fit_failures.py` (for the parti
 candidate fails to fit in one model: what the other models' candidates do). Every step is
 skip-if-exists, and several machines can share one work directory (files are claimed
 atomically). `summarize_samples.py` then collects the per-sample tables into one figure, and
-`plot_physics.py` makes the per-sample physics PDF from the arrays `analyze_fitted.py` saves:
-fit failures, efficiency vs true pT and fake rate vs fitted pT, pT resolution, and both split
+`plot_physics.py` makes the per-sample physics plots from the arrays `analyze_fitted.py` saves,
+one PDF per plot in `<outdir>/<sample>/`: fit failures, efficiency vs true pT and fake rate vs fitted pT, pT resolution, and both split
 into prompt and displaced (efficiency and resolution by true |d0|; fakes, which have no truth,
 by fitted |d0/σ(d0)| < 3 or > 3), every pT axis from 0.5 GeV.
 

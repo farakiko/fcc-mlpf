@@ -5,6 +5,7 @@ numpy
 scipy
 pyarrow
 matplotlib
+mplhep
 # EDM4hep ROOT reading (postprocessing adapters, validation audit, genfit chain step A/D):
 uproot
 awkward

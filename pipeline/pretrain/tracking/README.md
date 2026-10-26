@@ -86,7 +86,9 @@ of `eval.py` (`dm_pt`; model and baseline, also split prompt/displaced).
 `train_steps.jsonl` holds the running training loss every `--log-every` events.
 `training_curves.pdf` (`plot_training.py`, rewritten every epoch and runnable at any time on
 a run directory) shows the losses, the efficiency and fake rate per sample, and the
-efficiency vs true pT per sample, all against the epoch. `ep_<NNN>.pt` keeps the weights of
+efficiency vs true pT per sample, all against the epoch; `plot_training.py --compare` overlays
+several runs (training loss, validation loss vs epoch and vs optimizer steps, monitor
+efficiency on one held-out sample; one PDF per plot). `ep_<NNN>.pt` keeps the weights of
 every epoch, so `eval.py` (full held-out statistics) and the Genfit chain can be run on any
 epoch afterwards; `best.pt` is the epoch with the highest mean per-sample efficiency.
 
