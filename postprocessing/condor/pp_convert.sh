@@ -2,7 +2,8 @@
 # Condor runner for batch_convert.py: one condor job = one stripe of chunks.
 # Usage (set by run_pp_*.sub): pp_convert.sh <adapter> <job_index> <num_jobs>
 # Env (from the sub file): REPO (fcc-mlpf clone on afs/eos), INPUTS (glob), OUTDIR,
-#                          STACK_LABEL, FILES_PER_CHUNK, [MAX_FILES], [K4H_NIGHTLY]
+#                          STACK_LABEL, FILES_PER_CHUNK, [MAX_FILES], [K4H_NIGHTLY],
+#                          [STAGES] (cld adapter column groups, e.g. T,C; default T)
 set -e
 adapter=$1; job_index=$2; num_jobs=$3
 : "${REPO:?}"; : "${INPUTS:?}"; : "${OUTDIR:?}"; : "${STACK_LABEL:?}"; : "${FILES_PER_CHUNK:?}"
@@ -17,5 +18,5 @@ ORIG=("$@"); set --; setup_env; set -- "${ORIG[@]}"
 python "$REPO/postprocessing/batch_convert.py" \
   --adapter "$adapter" --inputs "$INPUTS" --outdir "$OUTDIR" \
   --files-per-chunk "$FILES_PER_CHUNK" --nproc 1 \
-  --stack "$STACK_LABEL" ${MAX_FILES:+--max-files $MAX_FILES} \
+  --stack "$STACK_LABEL" ${MAX_FILES:+--max-files $MAX_FILES} ${STAGES:+--stages $STAGES} \
   --job-index "$job_index" --num-jobs "$num_jobs"

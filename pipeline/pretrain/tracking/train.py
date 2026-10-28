@@ -202,6 +202,9 @@ def main():
                          "many minutes (0 = end of epoch only)")
     ap.add_argument("--log-every", type=int, default=20000,
                     help="append the running training loss to train_steps.jsonl every N events")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="run seed: initialization, data order, InfoNCE anchors (default 0 = the "
+                         "runs since 2026-10-15)")
     ap.add_argument("--check", action="store_true",
                     help="stability check: 3 epochs, finiteness asserts, per-detector eval, no checkpoints")
     args = ap.parse_args()
@@ -215,8 +218,13 @@ def main():
               for p in args.inputs]
     files = sum(groups, [])
     assert files, f"no inputs match {args.inputs}"
-    rng = np.random.default_rng(0)                    # data order
-    torch.manual_seed(0)                              # initialization, InfoNCE anchors
+    # the held-out monitor subsets (and the in-memory split) are drawn from seed 0 for every
+    # run, so runs with different --seed are monitored on the same events; the run seed sets
+    # the initialization, the data order and the InfoNCE anchors. Seed 0 keeps one stream for
+    # both (bit-identical to the runs before --seed existed).
+    mrng = np.random.default_rng(0)                   # monitor subsets, in-memory split
+    rng = mrng if args.seed == 0 else np.random.default_rng(args.seed)    # data order
+    torch.manual_seed(args.seed)                      # initialization, InfoNCE anchors
 
     if args.shard_cache:  # ---- streaming mode
         if args.test_frac:
@@ -246,12 +254,12 @@ def main():
         tst = []
         for ds in sorted(by_ds):
             got = []
-            for sp in [by_ds[ds][i] for i in rng.permutation(len(by_ds[ds]))]:
+            for sp in [by_ds[ds][i] for i in mrng.permutation(len(by_ds[ds]))]:
                 got += load_shard(sp)
                 if len(got) >= quota:
                     break
             tst += got[:quota]
-        ridx = rng.permutation(len(tst))
+        ridx = mrng.permutation(len(tst))
         val_sub = [tst[i] for i in ridx[:args.val_events]]
         eval_sub = [tst[i] for i in ridx[:args.eval_events]]
         del tst
@@ -266,7 +274,7 @@ def main():
             nval = max(1, int(len(evs) * args.test_first / len(files)))
             val_sub = evs[:nval]; trn_evs = evs[nval:]
         else:
-            idx = rng.permutation(len(evs))
+            idx = mrng.permutation(len(evs))
             nval = max(1, int(len(evs) * args.val_frac))
             val_sub = [evs[i] for i in idx[:nval]]; trn_evs = [evs[i] for i in idx[nval:]]
         eval_sub = val_sub

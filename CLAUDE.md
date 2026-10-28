@@ -82,7 +82,10 @@ the jointly-trained model: one-shot has a precise different meaning in the ML li
   365 GeV (external production, B.; tracker sim hits kept, calo sim dropped), converted via
   `batch_convert.py` → `cld_{40,91,160,240,365}gev/` next to `cld_ttbar` (same 200-ev chunks,
   same val convention). **1,060,400 events**, 5,302 chunks, 44 GB, 0 audit failures.
-  Occupancy ladder: 257→676 hits/ev and 17→48 truth tracks/ev from 40→365 GeV; labeled-hit
+  Process (measured 2026-10-26, card not recorded): e+e- → Z → uds ONLY, no γ* (Pythia
+  `WeakZ0:gmZmode = 2` inferred: hard-process u fraction 0.28 at every √s = Z couplings; with γ*
+  it would rise toward 0.67 off the pole), no b/c, no beam-spot smearing. The CLD paper's
+  samples are Z/γ*. Occupancy ladder: 257→676 hits/ev and 17→48 truth tracks/ev from 40→365 GeV; labeled-hit
   fraction 0.83 at every energy. Purpose: large diverse CLD-only benchmark training
   (user, 2026-10-14) before/alongside the mixed-scaling roadmap item.
 - **Trainings done**: (1) single-detector (CLD 80,260 ev, 20 ep): full-test eff 0.767 /

@@ -4,11 +4,12 @@ CLD adapter: REC EDM4hep (production/cld) -> canonical training parquet
 (no framework). Keeps the FULL MCParticles block (indices = podio rows, so no remap).
 
 Usage:  python cld.py REC1.edm4hep.root [REC2...] out_canonical.parquet \
-            [--detector CLD_o2_v08] [--b-tesla 2.0] [--stack key4hep-2026-04-08] [--calo]
+            [--detector CLD_o2_v08] [--b-tesla 2.0] [--stack key4hep-2026-04-08] [--stages T,C]
 
---calo adds the calorimeter group (stage [C]; postprocessing/README.md): calorimeter and
-muon-system hits, their fractional truth links, Pandora cluster membership, and per MC
-particle its calorimeter mother (HitPF's truth object, see calo_mother()).
+--stages selects the column groups (postprocessing/README.md): T = tracker hits + baseline
+tracks (stage [T]); C = calorimeter and muon-system hits, their fractional truth links,
+Pandora cluster membership, and per MC particle its calorimeter mother (HitPF's truth
+object, see calo_mother()) (stage [C]). Default T; T,C serves both stages and [PF].
 """
 import argparse
 import os
@@ -19,7 +20,7 @@ import awkward as ak
 import uproot
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from schema import write_events, SCHEMA_VERSION
+from schema import parse_stages, write_events, SCHEMA_VERSION
 
 # digi collection -> (relation, sim collection, canonical role id)
 CHAIN = [
@@ -137,9 +138,110 @@ def read_calo(arr, i, name2id, K):
     return c
 
 
-def read_file(fp, calo=False):
-    """-> list of canonical event dicts; events without tracker hits are skipped, so each
-    dict carries its source entry number as e["event"] (not a schema column)."""
+def read_tracker(arr, i, name2id):
+    """Tracker group of event i ([T]: thit_* + baseline bhit_track/btrack_mc)."""
+    e = {k: [] for k in ["thit_x", "thit_y", "thit_z", "thit_role", "thit_edep",
+                         "thit_edep_err", "thit_time", "thit_du", "thit_dv",
+                         "thit_mc", "thit_secondary",
+                         "thit_true_x", "thit_true_y", "thit_true_z",
+                         "thit_true_px", "thit_true_py", "thit_true_pz", "thit_pathlen"]}
+    rows = {}
+    for digi, rel, sim, role in CHAIN:
+        x = np.asarray(arr(f"{digi}/{digi}.position.x")[i]); n = len(x)
+        if n == 0:
+            continue
+        base = len(e["thit_x"])
+        for j in range(n):
+            rows[(name2id[digi], j)] = base + j
+        e["thit_x"] += list(x)
+        e["thit_y"] += list(np.asarray(arr(f"{digi}/{digi}.position.y")[i]))
+        e["thit_z"] += list(np.asarray(arr(f"{digi}/{digi}.position.z")[i]))
+        e["thit_role"] += [role] * n
+        e["thit_edep"] += list(np.asarray(arr(f"{digi}/{digi}.eDep")[i]))
+        e["thit_edep_err"] += list(np.asarray(arr(f"{digi}/{digi}.eDepError")[i]))
+        e["thit_time"] += list(np.asarray(arr(f"{digi}/{digi}.time")[i]))
+        e["thit_du"] += list(np.asarray(arr(f"{digi}/{digi}.du")[i]))
+        e["thit_dv"] += list(np.asarray(arr(f"{digi}/{digi}.dv")[i]))
+        # truth chain digi -> sim -> MC + sim-hit truth payload
+        rf = np.asarray(arr(f"_{rel}_from/_{rel}_from.index")[i])
+        rt = np.asarray(arr(f"_{rel}_to/_{rel}_to.index")[i])
+        spart = np.asarray(arr(f"_{sim}_particle/_{sim}_particle.index")[i])
+        ym = np.full(n, -1, np.int64)
+        ym[rf] = spart[rt]
+        e["thit_mc"] += list(ym)
+        for cname, sfx in [("thit_true_x", "position.x"), ("thit_true_y", "position.y"),
+                           ("thit_true_z", "position.z"), ("thit_true_px", "momentum.x"),
+                           ("thit_true_py", "momentum.y"), ("thit_true_pz", "momentum.z"),
+                           ("thit_pathlen", "pathLength")]:
+            sv = np.asarray(arr(f"{sim}/{sim}.{sfx}")[i])
+            out = np.zeros(n, np.float64); out[rf] = sv[rt]
+            e[cname] += list(out)
+        qual = np.asarray(arr(f"{sim}/{sim}.quality")[i])          # bit 30 = secondary
+        sec = ((qual.astype(np.int64) >> 30) & 1) if len(qual) else qual
+        outp = np.zeros(n, np.int64); outp[rf] = sec[rt]
+        e["thit_secondary"] += list(outp)
+    nh = len(e["thit_x"])
+    e = {k: np.asarray(v) for k, v in e.items()}
+    e["thit_modality"] = np.zeros(nh, np.int64)
+    e["thit_dw"] = np.zeros(nh, np.float32)
+    e["thit_overlay"] = np.zeros(nh, np.int64)
+    e["thit_nclusters"] = np.zeros(nh, np.int64)
+    for k in WIRE_ZERO:
+        e[k] = np.zeros(nh, np.float32)
+    # baseline finder
+    beg = np.asarray(arr(f"{TRACKS}/{TRACKS}.trackerHits_begin")[i])
+    end = np.asarray(arr(f"{TRACKS}/{TRACKS}.trackerHits_end")[i])
+    oidx = np.asarray(arr(f"_{TRACKS}_trackerHits/_{TRACKS}_trackerHits.index")[i])
+    ocid = np.asarray(arr(f"_{TRACKS}_trackerHits/_{TRACKS}_trackerHits.collectionID")[i])
+    T = len(beg)
+    bh = np.full(nh, -1, np.int64)
+    for k in range(T):
+        for j in range(beg[k], end[k]):
+            r = rows.get((int(ocid[j]), int(oidx[j])))
+            if r is not None:
+                bh[r] = k
+    e["bhit_track"] = bh
+    lf = np.asarray(arr("_SiTracksMCTruthLink_from/_SiTracksMCTruthLink_from.index")[i])
+    lt = np.asarray(arr("_SiTracksMCTruthLink_to/_SiTracksMCTruthLink_to.index")[i])
+    lw = np.asarray(arr("SiTracksMCTruthLink/SiTracksMCTruthLink.weight")[i])
+    bm = np.full(T, -1, np.int64); bw = np.zeros(T)
+    for a, c, w in zip(lf, lt, lw):
+        if a < T and w > bw[a]:
+            bw[a] = w; bm[a] = c
+    e["btrack_mc"] = bm
+    return e
+
+
+def read_mc(arr, i):
+    """MC block of event i (full, podio order -> indices need no remap)."""
+    e = {}
+    px = np.asarray(arr("MCParticles/MCParticles.momentum.x")[i])
+    py = np.asarray(arr("MCParticles/MCParticles.momentum.y")[i])
+    pz = np.asarray(arr("MCParticles/MCParticles.momentum.z")[i])
+    m = np.asarray(arr("MCParticles/MCParticles.mass")[i])
+    K = len(px)
+    e["mc_px"], e["mc_py"], e["mc_pz"], e["mc_m"] = px, py, pz, m
+    e["mc_e"] = np.sqrt(px**2 + py**2 + pz**2 + m**2)
+    e["mc_pdg"] = np.asarray(arr("MCParticles/MCParticles.PDG")[i]).astype(np.int64)
+    e["mc_charge"] = np.asarray(arr("MCParticles/MCParticles.charge")[i])
+    e["mc_genstatus"] = np.asarray(arr("MCParticles/MCParticles.generatorStatus")[i]).astype(np.int64)
+    e["mc_simstatus"] = np.asarray(arr("MCParticles/MCParticles.simulatorStatus")[i]).astype(np.int64)
+    e["mc_vx"] = np.asarray(arr("MCParticles/MCParticles.vertex.x")[i])
+    e["mc_vy"] = np.asarray(arr("MCParticles/MCParticles.vertex.y")[i])
+    e["mc_vz"] = np.asarray(arr("MCParticles/MCParticles.vertex.z")[i])
+    pb = np.asarray(arr("MCParticles/MCParticles.parents_begin")[i])
+    pe = np.asarray(arr("MCParticles/MCParticles.parents_end")[i])
+    pidx = np.asarray(arr("_MCParticles_parents/_MCParticles_parents.index")[i])
+    e["mc_parent"] = np.array([pidx[pb[k]] if pe[k] > pb[k] else -1 for k in range(K)], np.int64)
+    return e
+
+
+def read_file(fp, stages=("T",)):
+    """-> list of canonical event dicts with the groups of `stages` (T: tracker, C:
+    calorimeter; the MC block always). The event selection does not depend on the stages
+    (events without tracker hits are skipped), so every derived dataset of a source holds
+    the same events; each dict carries its source entry number as e["event"] (not a
+    schema column)."""
     f = uproot.open(fp)
     t = f["events"]
     name2id = collection_ids(f)
@@ -152,100 +254,13 @@ def read_file(fp, calo=False):
 
     events = []
     for i in range(t.num_entries):
-        e = {k: [] for k in ["thit_x", "thit_y", "thit_z", "thit_role", "thit_edep",
-                             "thit_edep_err", "thit_time", "thit_du", "thit_dv",
-                             "thit_mc", "thit_secondary",
-                             "thit_true_x", "thit_true_y", "thit_true_z",
-                             "thit_true_px", "thit_true_py", "thit_true_pz", "thit_pathlen"]}
-        rows = {}
-        for digi, rel, sim, role in CHAIN:
-            x = np.asarray(arr(f"{digi}/{digi}.position.x")[i]); n = len(x)
-            if n == 0:
-                continue
-            base = len(e["thit_x"])
-            for j in range(n):
-                rows[(name2id[digi], j)] = base + j
-            e["thit_x"] += list(x)
-            e["thit_y"] += list(np.asarray(arr(f"{digi}/{digi}.position.y")[i]))
-            e["thit_z"] += list(np.asarray(arr(f"{digi}/{digi}.position.z")[i]))
-            e["thit_role"] += [role] * n
-            e["thit_edep"] += list(np.asarray(arr(f"{digi}/{digi}.eDep")[i]))
-            e["thit_edep_err"] += list(np.asarray(arr(f"{digi}/{digi}.eDepError")[i]))
-            e["thit_time"] += list(np.asarray(arr(f"{digi}/{digi}.time")[i]))
-            e["thit_du"] += list(np.asarray(arr(f"{digi}/{digi}.du")[i]))
-            e["thit_dv"] += list(np.asarray(arr(f"{digi}/{digi}.dv")[i]))
-            # truth chain digi -> sim -> MC + sim-hit truth payload
-            rf = np.asarray(arr(f"_{rel}_from/_{rel}_from.index")[i])
-            rt = np.asarray(arr(f"_{rel}_to/_{rel}_to.index")[i])
-            spart = np.asarray(arr(f"_{sim}_particle/_{sim}_particle.index")[i])
-            ym = np.full(n, -1, np.int64)
-            ym[rf] = spart[rt]
-            e["thit_mc"] += list(ym)
-            for cname, sfx in [("thit_true_x", "position.x"), ("thit_true_y", "position.y"),
-                               ("thit_true_z", "position.z"), ("thit_true_px", "momentum.x"),
-                               ("thit_true_py", "momentum.y"), ("thit_true_pz", "momentum.z"),
-                               ("thit_pathlen", "pathLength")]:
-                sv = np.asarray(arr(f"{sim}/{sim}.{sfx}")[i])
-                out = np.zeros(n, np.float64); out[rf] = sv[rt]
-                e[cname] += list(out)
-            qual = np.asarray(arr(f"{sim}/{sim}.quality")[i])          # bit 30 = secondary
-            sec = ((qual.astype(np.int64) >> 30) & 1) if len(qual) else qual
-            outp = np.zeros(n, np.int64); outp[rf] = sec[rt]
-            e["thit_secondary"] += list(outp)
-        if not e["thit_x"]:
+        if not sum(len(arr(f"{digi}/{digi}.position.x")[i]) for digi, _, _, _ in CHAIN):
             continue
-        nh = len(e["thit_x"])
-        e = {k: np.asarray(v) for k, v in e.items()}
-        e["thit_modality"] = np.zeros(nh, np.int64)
-        e["thit_dw"] = np.zeros(nh, np.float32)
-        e["thit_overlay"] = np.zeros(nh, np.int64)
-        e["thit_nclusters"] = np.zeros(nh, np.int64)
-        for k in WIRE_ZERO:
-            e[k] = np.zeros(nh, np.float32)
-
-        # MC block (full, podio order -> indices need no remap)
-        px = np.asarray(arr("MCParticles/MCParticles.momentum.x")[i])
-        py = np.asarray(arr("MCParticles/MCParticles.momentum.y")[i])
-        pz = np.asarray(arr("MCParticles/MCParticles.momentum.z")[i])
-        m = np.asarray(arr("MCParticles/MCParticles.mass")[i])
-        K = len(px)
-        e["mc_px"], e["mc_py"], e["mc_pz"], e["mc_m"] = px, py, pz, m
-        e["mc_e"] = np.sqrt(px**2 + py**2 + pz**2 + m**2)
-        e["mc_pdg"] = np.asarray(arr("MCParticles/MCParticles.PDG")[i]).astype(np.int64)
-        e["mc_charge"] = np.asarray(arr("MCParticles/MCParticles.charge")[i])
-        e["mc_genstatus"] = np.asarray(arr("MCParticles/MCParticles.generatorStatus")[i]).astype(np.int64)
-        e["mc_simstatus"] = np.asarray(arr("MCParticles/MCParticles.simulatorStatus")[i]).astype(np.int64)
-        e["mc_vx"] = np.asarray(arr("MCParticles/MCParticles.vertex.x")[i])
-        e["mc_vy"] = np.asarray(arr("MCParticles/MCParticles.vertex.y")[i])
-        e["mc_vz"] = np.asarray(arr("MCParticles/MCParticles.vertex.z")[i])
-        pb = np.asarray(arr("MCParticles/MCParticles.parents_begin")[i])
-        pe = np.asarray(arr("MCParticles/MCParticles.parents_end")[i])
-        pidx = np.asarray(arr("_MCParticles_parents/_MCParticles_parents.index")[i])
-        e["mc_parent"] = np.array([pidx[pb[k]] if pe[k] > pb[k] else -1 for k in range(K)], np.int64)
-
-        # baseline finder
-        beg = np.asarray(arr(f"{TRACKS}/{TRACKS}.trackerHits_begin")[i])
-        end = np.asarray(arr(f"{TRACKS}/{TRACKS}.trackerHits_end")[i])
-        oidx = np.asarray(arr(f"_{TRACKS}_trackerHits/_{TRACKS}_trackerHits.index")[i])
-        ocid = np.asarray(arr(f"_{TRACKS}_trackerHits/_{TRACKS}_trackerHits.collectionID")[i])
-        T = len(beg)
-        bh = np.full(nh, -1, np.int64)
-        for k in range(T):
-            for j in range(beg[k], end[k]):
-                r = rows.get((int(ocid[j]), int(oidx[j])))
-                if r is not None:
-                    bh[r] = k
-        e["bhit_track"] = bh
-        lf = np.asarray(arr("_SiTracksMCTruthLink_from/_SiTracksMCTruthLink_from.index")[i])
-        lt = np.asarray(arr("_SiTracksMCTruthLink_to/_SiTracksMCTruthLink_to.index")[i])
-        lw = np.asarray(arr("SiTracksMCTruthLink/SiTracksMCTruthLink.weight")[i])
-        bm = np.full(T, -1, np.int64); bw = np.zeros(T)
-        for a, c, w in zip(lf, lt, lw):
-            if a < T and w > bw[a]:
-                bw[a] = w; bm[a] = c
-        e["btrack_mc"] = bm
-        if calo:
-            e.update(read_calo(arr, i, name2id, K))
+        e = read_mc(arr, i)
+        if "T" in stages:
+            e.update(read_tracker(arr, i, name2id))
+        if "C" in stages:
+            e.update(read_calo(arr, i, name2id, len(e["mc_pdg"])))
             e["mc_calomother"] = calo_mother(e["mc_parent"], e["mc_vx"], e["mc_vy"], e["mc_vz"],
                                              e["mc_simstatus"])
         e["event"] = i
@@ -260,17 +275,21 @@ def main():
     ap.add_argument("--detector", default="CLD_o2_v08")
     ap.add_argument("--b-tesla", type=float, default=2.0)
     ap.add_argument("--stack", default="key4hep-2026-04-08")
-    ap.add_argument("--calo", action="store_true", help="add the calorimeter group (stage [C])")
+    ap.add_argument("--stages", default="T", type=parse_stages,
+                    help="column groups to write, comma-separated: T (tracker, [T]), C "
+                         "(calorimeter, [C]); e.g. T,C. The MC block is always written.")
     args = ap.parse_args()
     events = []
     for fp in args.inputs:
-        events += read_file(fp, calo=args.calo)
+        events += read_file(fp, stages=args.stages)
         print(f"  {os.path.basename(fp)}: cum {len(events)} events", flush=True)
     meta = dict(schema_version=SCHEMA_VERSION, detector=args.detector, B_tesla=args.b_tesla,
-                stack=args.stack, source=f"cld.py<-{len(args.inputs)} files")
+                stack=args.stack, source=f"cld.py<-{len(args.inputs)} files",
+                stages=",".join(args.stages))
     n = write_events(args.output, events, meta)
-    print(f"wrote {args.output}: {n} events, {sum(len(e['thit_x']) for e in events)} tracker hits"
-          + (f", {sum(len(e['chit_e']) for e in events)} calo hits" if args.calo else ""))
+    print(f"wrote {args.output}: {n} events, stages {','.join(args.stages)}"
+          + (f", {sum(len(e['thit_x']) for e in events)} tracker hits" if "T" in args.stages else "")
+          + (f", {sum(len(e['chit_e']) for e in events)} calo hits" if "C" in args.stages else ""))
 
 
 if __name__ == "__main__":

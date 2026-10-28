@@ -92,6 +92,11 @@ efficiency on one held-out sample; one PDF per plot). `ep_<NNN>.pt` keeps the we
 every epoch, so `eval.py` (full held-out statistics) and the Genfit chain can be run on any
 epoch afterwards; `best.pt` is the epoch with the highest mean per-sample efficiency.
 
+Seeds: `--seed N` (default 0) sets the initialization, the data order and the InfoNCE anchor
+draws; the held-out monitor subsets are drawn with seed 0 for every run, so runs that differ
+only in `--seed` are monitored on the same events (seed spread = repeated runs of one
+configuration with `--seed 1, 2, ...`).
+
 Recovery: `last.pt` is written at the end of every epoch and, inside an epoch, at a shard
 boundary every `--ckpt-minutes` (default 30). It carries the model, optimizer, scheduler,
 the epoch's shard order, the position in it and the random states (numpy and torch, both

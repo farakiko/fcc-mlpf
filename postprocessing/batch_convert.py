@@ -28,7 +28,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def convert_chunk(adapter, files, out, stack, detector, calo=False):
+def convert_chunk(adapter, files, out, stack, detector, stages="T"):
     if os.path.exists(out):
         return out, "skipped (exists)"
     tmp = out + ".tmp.parquet"
@@ -37,8 +37,7 @@ def convert_chunk(adapter, files, out, stack, detector, calo=False):
             cmd = [sys.executable, os.path.join(HERE, "cld.py")] + files + [tmp, "--stack", stack]
             if detector:
                 cmd += ["--detector", detector]
-            if calo:
-                cmd += ["--calo"]
+            cmd += ["--stages", stages]
         elif adapter == "idea":
             assert len(files) == 1, "idea adapter converts one digi file per chunk"
             cmd = ["bash", os.path.join(HERE, "idea_digi_to_parquet.sh"), files[0], tmp, "--stack", stack]
@@ -68,8 +67,8 @@ def main():
     ap.add_argument("--stack", required=True, help="stack label for provenance metadata")
     ap.add_argument("--detector", default="", help="override detector label (cld adapter)")
     ap.add_argument("--max-files", type=int, default=0, help="0 = all")
-    ap.add_argument("--calo", action="store_true",
-                    help="cld adapter: add the calorimeter group (stage [C])")
+    ap.add_argument("--stages", default="T",
+                    help="cld adapter: column groups, comma-separated: T (tracker), C (calorimeter)")
     # condor striping: job N of M processes chunks with index % M == N (resumable; each
     # job writes its own MANIFEST_<N>.txt)
     ap.add_argument("--job-index", type=int, default=0)
@@ -91,7 +90,7 @@ def main():
                     f"source         : {args.inputs}\n"
                     f"source files   : {len(files)}{' (max-files='+str(args.max_files)+')' if args.max_files else ''}\n"
                     f"adapter        : postprocessing/{args.adapter}.py (fcc-mlpf)"
-                    f"{' --calo' if args.calo else ''}\n"
+                    f" --stages {args.stages}\n"
                     f"stack label    : {args.stack}\n"
                     f"files/chunk    : {args.files_per_chunk}\n"
                     f"created        : {datetime.date.today().isoformat()}\n"
@@ -107,7 +106,7 @@ def main():
     with ProcessPoolExecutor(max_workers=args.nproc) as ex:
         for ci, ch in mine:
             out = os.path.join(args.outdir, f"chunk_{ci:05d}.parquet")
-            jobs[ex.submit(convert_chunk, args.adapter, ch, out, args.stack, args.detector, args.calo)] = (ci, ch)
+            jobs[ex.submit(convert_chunk, args.adapter, ch, out, args.stack, args.detector, args.stages)] = (ci, ch)
         done = fail = 0
         for fut in as_completed(jobs):
             ci, ch = jobs[fut]
@@ -123,7 +122,7 @@ def main():
 
     mname = "MANIFEST.txt" if args.num_jobs == 1 else f"MANIFEST_{args.job_index:03d}.txt"
     with open(os.path.join(args.outdir, mname), "w") as f:
-        f.write(f"# adapter={args.adapter}{' --calo' if args.calo else ''} inputs={args.inputs} files_per_chunk={args.files_per_chunk} stack={args.stack}\n")
+        f.write(f"# adapter={args.adapter} --stages {args.stages} inputs={args.inputs} files_per_chunk={args.files_per_chunk} stack={args.stack}\n")
         for ci, n, first, last, status in sorted(manifest):
             f.write(f"chunk_{ci:05d}  {n:3d} files  {os.path.basename(first)} .. {os.path.basename(last)}  {status}\n")
     print(f"\n{done} ok / {fail} failed -> {args.outdir}  (MANIFEST.txt written)")

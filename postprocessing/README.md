@@ -19,8 +19,9 @@ the file is trainable — regardless of which detector produced it.
 
 **Run it:**
 ```bash
-# CLD (reads REC EDM4hep directly; needs uproot/awkward/pyarrow); --calo adds the [C] group
-python cld.py  REC1.edm4hep.root [REC2...]  out.parquet  --detector CLD_o2_v08 --stack key4hep-2026-04-08 [--calo]
+# CLD (reads REC EDM4hep directly; needs uproot/awkward/pyarrow); --stages picks the column
+# groups: T (tracker, stage [T]), C (calorimeter, stage [C]); T,C serves both stages and [PF]
+python cld.py  REC1.edm4hep.root [REC2...]  out.parquet  --detector CLD_o2_v08 --stack key4hep-2026-04-08 --stages T,C
 # IDEA, one step from digi ROOT (needs a key4hep env; chains the two steps below)
 ./idea_digi_to_parquet.sh digi.root out.parquet --stack sw-nightlies-2026-09-13
 # (or in two steps: production/idea process_tree.py -> graph parquet -> idea.py; the graph
@@ -97,7 +98,16 @@ Only particles referenced by hits (or their stored parents) are kept; `thit_mc` 
 Baseline finder (where one exists — CLD only today): `bhit_track` (hit → baseline-track id,
 −1 unassigned), `btrack_mc` (baseline track → mc row, −1 fake).
 
-## Calorimeter group (`chit_*`, `clink_*`, `mc_calomother`; optional, all or none)
+## Stage groups
+
+A file carries the MC block and one or more stage groups, each complete or absent: **T** =
+tracker hits (`thit_*`) and, where the detector has one, the baseline finder (`b*`); **C** =
+the calorimeter group below. The metadata key `stages` lists them (`T`, `C` or `T,C`; files
+written before v0.3 carry T). The adapter's `--stages` flag selects them; the event selection
+does not depend on it (CLD: events without tracker hits are skipped), so datasets converted
+with different stages from the same source hold the same events, chunk by chunk.
+
+## Calorimeter group (`chit_*`, `clink_*`, `mc_calomother`; stage C)
 
 Stage [C] input and truth (`pipeline/pretrain/clustering/DESIGN.md`). Calorimeter and
 muon-system hits share one row index.
@@ -165,7 +175,7 @@ The CLD adapter (`postprocessing/cld.py`) reads REC files directly (no intermedi
 | `SimTrackerHit` truth | `thit_true_*`, `thit_true_p*`, `thit_pathlen`, `thit_secondary` | copy (`thit_overlay`=0) |
 | `MCParticles.*` | `mc_*` | direct (momentum already px/py/pz) |
 | `SiTracks_Refitted` trackerHits / `SiTracksMCTruthLink` | `bhit_track`, `btrack_mc` | hit-set + best-weight link |
-| `{ECAL,HCAL}{Barrel,Endcap}`, `HCALOther`, `MUON` (in this order) | `chit_x/y/z`, `chit_e`, `chit_time` | copy (`--calo`) |
+| `{ECAL,HCAL}{Barrel,Endcap}`, `HCALOther`, `MUON` (in this order) | `chit_x/y/z`, `chit_e`, `chit_time` | copy (`--stages` with C) |
 | CalorimeterHit `.type` = caloType + 10·caloID + 1000·layout + 10000·layer | `chit_role`, `chit_modality`, `chit_layer` | decoded (caloID, layout) → role; caloID → modality |
 | `CalohitMCTruthLink` (weights split the hit energy among particles) | `clink_*`, `chit_mc` | merged per (hit, particle), normalized per hit; largest fraction |
 | `PandoraClusters` hits | `chit_pandora` | hit → cluster index |

@@ -53,6 +53,18 @@ INT_COLS = {"thit_role", "thit_modality", "thit_mc", "thit_secondary", "thit_ove
             "chit_role", "chit_modality", "chit_layer", "chit_mc", "chit_pandora",
             "clink_hit", "clink_mc", "mc_calomother"}
 META_KEYS = ["schema_version", "detector", "B_tesla", "stack", "source"]
+# stage column groups (the MC block is always present); metadata key "stages" lists the
+# groups a file carries ("T", "C", "T,C"); files written before v0.3 carry T only
+STAGE_GROUPS = {"T": THIT, "C": CALO}
+
+
+def parse_stages(s):
+    """'T,C' -> ('T', 'C') in canonical order; rejects unknown stages."""
+    st = [x.strip().upper() for x in str(s).split(",") if x.strip()]
+    bad = [x for x in st if x not in STAGE_GROUPS]
+    if bad or not st:
+        raise ValueError(f"stages must be a comma-separated subset of {list(STAGE_GROUPS)}, got {s!r}")
+    return tuple(g for g in STAGE_GROUPS if g in st)
 
 
 def _best_codec():
@@ -71,8 +83,11 @@ def write_events(path, events, meta, row_group_size=25):
     missing = [k for k in META_KEYS if k not in meta]
     if missing:
         raise ValueError(f"metadata missing keys: {missing}")
-    cols = (THIT + MC + (BASE if all(c in events[0] for c in BASE) else [])
-            + (CALO if all(c in events[0] for c in CALO) else []))
+    has = {g: all(c in events[0] for c in cols) for g, cols in STAGE_GROUPS.items()}
+    cols = ((THIT if has["T"] else []) + MC
+            + (BASE if has["T"] and all(c in events[0] for c in BASE) else [])
+            + (CALO if has["C"] else []))
+    meta = dict(meta, stages=",".join(g for g in STAGE_GROUPS if has[g]))
     data = {}
     for c in cols:
         dt = np.int64 if c in INT_COLS else np.float32
@@ -96,32 +111,46 @@ def audit_parquet(path, nsample=5):
     if md.get("schema_version") not in (None,) + COMPATIBLE_VERSIONS:
         problems.append(f"schema_version {md.get('schema_version')} not in {COMPATIBLE_VERSIONS}")
     names = set(t.column_names)
-    for c in THIT + MC:
+    for c in MC:
         if c not in names:
             problems.append(f"column missing: {c}")
+    # stage groups are all-or-nothing; at least one; must match the "stages" metadata
+    present = []
+    for g, cols in STAGE_GROUPS.items():
+        miss = [c for c in cols if c not in names]
+        if len(miss) < len(cols):
+            present.append(g)
+            if miss:
+                problems.append(f"stage {g} group incomplete, missing: {miss}")
+    if not present:
+        problems.append(f"no stage group present (expected one of {list(STAGE_GROUPS)})")
+    declared = md.get("stages", "T")
+    if declared != ",".join(present):
+        problems.append(f"metadata stages={declared!r} but groups present: {present}")
     if problems:
         return problems, md, t.num_rows
+    has_trk = "T" in present
     has_base = all(c in names for c in BASE)
-    has_calo = any(c in names for c in CALO)
-    if has_calo:
-        miss = [c for c in CALO if c not in names]
-        if miss:                                  # the calo group is all-or-nothing
-            return problems + [f"calo group incomplete, missing: {miss}"], md, t.num_rows
+    has_calo = "C" in present
     n = min(nsample, t.num_rows)
     for i in range(n):
+        K = len(t.column("mc_pdg")[i].as_py())
+        par = np.asarray(t.column("mc_parent")[i].as_py())
+        if K and len(par) and (par.max() >= K or par.min() < -1):
+            problems.append(f"ev{i}: mc_parent out of range")
+        if has_calo:
+            problems += [f"ev{i}: {p}" for p in _audit_calo(t, i, K)]
+        if not has_trk:
+            continue
         role = np.asarray(t.column("thit_role")[i].as_py())
         mod = np.asarray(t.column("thit_modality")[i].as_py())
         tmc = np.asarray(t.column("thit_mc")[i].as_py())
-        K = len(t.column("mc_pdg")[i].as_py())
-        par = np.asarray(t.column("mc_parent")[i].as_py())
         if len(role) and not set(np.unique(role)) <= set(ROLES):
             problems.append(f"ev{i}: unknown roles {set(np.unique(role)) - set(ROLES)}")
         if len(mod) and not set(np.unique(mod)) <= set(MODALITIES):
             problems.append(f"ev{i}: unknown modalities")
         if len(tmc) and (tmc.max() >= K or tmc.min() < -1):
             problems.append(f"ev{i}: thit_mc out of range [-1,{K})")
-        if K and len(par) and (par.max() >= K or par.min() < -1):
-            problems.append(f"ev{i}: mc_parent out of range")
         if has_base:
             bt = np.asarray(t.column("btrack_mc")[i].as_py())
             if len(bt) and (bt.max() >= K or bt.min() < -1):
@@ -131,8 +160,6 @@ def audit_parquet(path, nsample=5):
         for c in THIT:
             if len(t.column(c)[i].as_py()) != nh:
                 problems.append(f"ev{i}: {c} length != n_hits"); break
-        if has_calo:
-            problems += [f"ev{i}: {p}" for p in _audit_calo(t, i, K)]
     return problems, md, t.num_rows
 
 
@@ -184,7 +211,7 @@ def main():
     for fp in sys.argv[1:]:
         problems, md, nev = audit_parquet(fp)
         print(f"{fp}: {nev} events, detector={md.get('detector','?')}, "
-              f"schema={md.get('schema_version','?')}")
+              f"schema={md.get('schema_version','?')}, stages={md.get('stages','T')}")
         for p in problems:
             print("  [FAIL]", p)
         bad += len(problems)
