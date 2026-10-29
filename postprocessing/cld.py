@@ -91,7 +91,7 @@ def read_calo(arr, i, name2id, K):
     """Calorimeter group of event i (schema.CALO columns except mc_calomother)."""
     c = {k: [] for k in ["chit_x", "chit_y", "chit_z", "chit_e", "chit_time", "chit_role",
                          "chit_modality", "chit_layer"]}
-    rows, base = {}, 0
+    rows, sizes, base = {}, {}, 0
     for d in CALO_DIGI:
         e = np.asarray(arr(f"{d}/{d}.energy")[i]); n = len(e)
         ty = np.asarray(arr(f"{d}/{d}.type")[i]).astype(np.int64)
@@ -103,7 +103,7 @@ def read_calo(arr, i, name2id, K):
         c["chit_time"].append(np.asarray(arr(f"{d}/{d}.time")[i]))
         for ax in "xyz":
             c[f"chit_{ax}"].append(np.asarray(arr(f"{d}/{d}.position.{ax}")[i]))
-        rows[name2id[d]] = base; base += n
+        rows[name2id[d]] = base; sizes[name2id[d]] = n; base += n
     c = {k: np.concatenate(v) if v else np.zeros(0) for k, v in c.items()}
     nc = base
     # truth: CalohitMCTruthLink weights split the calibrated hit energy among the particles;
@@ -113,7 +113,8 @@ def read_calo(arr, i, name2id, K):
     lm = np.asarray(arr(f"_{CALO_LINK}_to/_{CALO_LINK}_to.index")[i]).astype(np.int64)
     lw = np.asarray(arr(f"{CALO_LINK}/{CALO_LINK}.weight")[i]).astype(np.float64)
     off = np.array([rows.get(int(x), -1) for x in fc], np.int64)
-    ok = (off >= 0) & (lm >= 0) & (lm < K) & (lw > 0)
+    size = np.array([sizes.get(int(x), 0) for x in fc], np.int64)
+    ok = (off >= 0) & (fi >= 0) & (fi < size) & (lm >= 0) & (lm < K) & (lw > 0)
     hit = off[ok] + fi[ok]
     key, inv = np.unique(hit * K + lm[ok], return_inverse=True)
     w = np.bincount(inv, weights=lw[ok])

@@ -180,6 +180,35 @@ Memory is not the constraint (PyTorch's memory-efficient attention); fp32 arithm
 cld_91gev training events, ≈ 1.3 h on tt̄. A short fp32-vs-bf16 equivalence check precedes
 the first training ([T] trains in fp32).
 
+## Training study 2026-10-28: loss falling, efficiency falling
+
+The first trainings (9k events at 91 GeV, recipe copied from [T]) showed the loss falling while
+the monitor efficiency fell from 0.075 to 0.027 at a fake rate of 0.37. Three independent
+reviews (code audit, design review, empirical tests) found no error in the data, labels,
+matching or losses; the cause was the readout:
+
+- The masks were learned: on the 5-epoch checkpoint, assigning every hit to its argmax slot
+  over all slots gives an efficiency of 0.947 on held-out events. The readout copied from [T]
+  keeps only slots with activity > 0.5, and with [T]'s activity weight (0.1) the activity head
+  stays near its prior (≈ K/M ≈ 0.17): 2 of ~42 slots passed, efficiency 0.016.
+- As the masks improved, the head became more conservative, so efficiency fell while the loss
+  fell. The total loss is dominated by InfoNCE and the focal term; the Dice term stayed at its
+  "nothing found" value until the readout worked.
+- Overfitting 10 events: with activity weight 1 in the loss and the Hungarian cost, the
+  readout reaches 0.99 efficiency at 0.5% fakes (0.79 / 4% with weight 0.1). Unweighted Dice,
+  dropping InfoNCE or dropping the noise term give no comparable gain; without InfoNCE the
+  masks are worse (0.85 instead of 0.98).
+- The per-hit threshold of [T] (assignment probability > 0.5) leaves contested hits out: with
+  the focal loss (α = 0.25), the optimal probability exceeds 0.5 only if a hit belongs to the
+  slot more than ~75% of the time. Without noise hits, every hit is assigned to its argmax slot.
+- cuDNN's attention backend built a new graph for every new hit count (3.2 s per step on
+  unseen events, 21 ms with it disabled); it is disabled in train.py.
+
+Changes: activity weight 1 in loss and cost (`--w-act`), readout without per-hit threshold,
+monitor with both readouts and every loss term. Open: training-target threshold (objects with
+fewer than 10 hits are 18% of targets, < 1% of the energy) and a locality bias in the
+attention (97% of hits have their nearest hit in the same object).
+
 ## Deviations from HitPF, and why
 
 1. Calorimeter hits only (HitPF clusters tracks together with hits): the [C] stage is
