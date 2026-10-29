@@ -62,3 +62,19 @@ charged hadrons 0.91, neutral hadrons 0.67); Pandora uses tracks, this model doe
 parameter-free nearest-neighbour clustering (hits linked within 15-25 mm, clusters below 10
 hits dropped) reaches about 0.79 at 0.07 on 50 of those events: the floor any learned
 clustering has to clear. On 1,000 held-out 91 GeV events, Pandora reaches 0.864 at 0.036.
+
+## Evaluation
+
+```bash
+python eval.py --model "v0=runs/c_91gev/best.pt" [--model "...=..."] \
+    --inputs '<derived_v0.3>/cld_91gev/chunk_000[0-9]*.parquet' --shard-cache DIR \
+    --max-events 2000 --outdir eval_c91 --exp CLD --exp-text "Full Sim"
+```
+
+`eval.py` compares any number of checkpoints with Pandora and the nearest-neighbour floor
+(`--nn-link` mm, `--nn-min-hits`) on held-out chunks, per sample, with the matching of
+`metrics.py`. One PDF per plot: efficiency vs true energy per class, fake rate and fake-energy
+fraction vs cluster energy, and the energy response (hit-energy sum over true energy) of
+matched clusters per class; `summary.txt` holds the inclusive numbers and `eval_<sample>.npz`
+the binned counts. On 1,000 held-out 91 GeV events: Pandora 0.864 / 0.035 (fake energy
+0.013), nearest-neighbour floor (20 mm, 10 hits) 0.779 / 0.078 (0.024).

@@ -21,6 +21,11 @@ sample. Terminology ladder for presentations: zero-shot → joint training (in-d
 finetuned (few-shot finetuning at the low-sample end). Do NOT use "single-shot/one-shot" for
 the jointly-trained model: one-shot has a precise different meaning in the ML literature.
 
+**The target (user, 2026-10-29): the ACAT 2027 abstract in `docs/acat2027_abstract.md`.** Read
+it before planning work. It also lists which claims rest on which evidence and what is
+deliberately NOT claimed (no numbers; no "IDEA improves CLD"; no IDEA baseline comparison).
+Its "end-to-end" means hits to particles through the staged chain, not differentiability.
+
 ## Decided architecture (dated decisions; do not re-litigate without new evidence)
 
 - **Track fitting = Genfit2 only** (user, 2026-10-13). The k4RecTracker `GenfitTrackFitter`
