@@ -79,13 +79,19 @@ class ShowerFormer(nn.Module):
             T = T + ca(n1(T), Hk, Hk, need_weights=False)[0]
             a = n2(T); T = T + sa(a, a, a, need_weights=False)[0]
             T = T + ff(n3(T))
-        T = T[0]
-        return self.h_active(T).squeeze(1), self.h_assign(T) @ H.T
+        with torch.autocast(H.device.type, enabled=False):   # heads in fp32 (see forward)
+            T, H = T[0].float(), H.float()
+            return self.h_active(T).squeeze(1), self.h_assign(T) @ H.T
 
     def forward(self, x, etaphi):
+        """Under bf16 autocast only the transformer runs in bf16: the output heads (activity,
+        assignment logits, InfoNCE embedding, noise) run in fp32, since their outputs enter the
+        losses directly (bf16 keeps ~3 significant digits: a logit of 20 is off by ~0.1)."""
         H = self.encode(x, etaphi)
         act, A = self.decode(H)
-        return act, A, F.normalize(H, dim=1), self.h_bg(H).squeeze(1)
+        with torch.autocast(H.device.type, enabled=False):
+            H = H.float()
+            return act, A, F.normalize(H, dim=1), self.h_bg(H).squeeze(1)
 
     @torch.no_grad()
     def assign(self, x, etaphi, act_thr=0.5, hit_thr=0.0, amp=False):

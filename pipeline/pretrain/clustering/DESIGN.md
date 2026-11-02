@@ -155,9 +155,11 @@ the contribution fractions (§2), they carry the full particle-level truth; only
 (step positions and times) is missing, and no label uses it. Checked on one 91 GeV file (100
 events: all hits linked, all links resolve); each energy point is audited in step 1.
 
-HitPF trains its clustering on Z→qq̄ at 91 GeV (900k events). The closest sample here is
-cld_91gev (180k training events, 2.7k hits per event); proposal: first training on it, then
-the energy scan and tt̄ (the densest events) as in [T].
+Training sample (user, 2026-10-29): the first version trains on cld_ttbar (80k training
+events, 8.5k hits per event), which contains almost all the physics of the other samples (dense
+jets, heavy flavour, leptons); a second version adds the other samples, to see whether they
+help. Every version is evaluated on every sample separately. (HitPF trains its clustering on
+Z→qq̄ at 91 GeV; a first 91 GeV run, 2026-10-29, served to validate the recipe at scale.)
 
 The current canonical parquets carry no calo columns, so [C] needs a reconversion, into new
 derived directories (the [T] inputs are not rewritten), with the same chunking (20 files per
@@ -208,6 +210,33 @@ Changes: activity weight 1 in loss and cost (`--w-act`), readout without per-hit
 monitor with both readouts and every loss term. Open: training-target threshold (objects with
 fewer than 10 hits are 18% of targets, < 1% of the energy) and a locality bias in the
 attention (97% of hits have their nearest hit in the same object).
+
+## Training study 2026-10-30: tt̄ learning rate and precision
+
+The first tt̄ training (learning rate 1e-4, no warmup, bf16; the recipe that reached 0.82 after
+one epoch at 91 GeV) reached its lowest loss 40k events into epoch 0, then degraded and stayed
+at efficiency 0.52-0.54, fake rate 0.39, below the nearest-neighbour floor (0.78 / 0.08 on 1,000
+held-out tt̄ events; Pandora 0.87 / 0.034). Three probes with the same schedule (20 epochs,
+320 slots), monitored on 300 held-out tt̄ events:
+
+| learning rate, precision | best epoch | efficiency | fake rate | fake energy | all slots |
+|---|---:|---:|---:|---:|---:|
+| 1e-4, bf16 (the first recipe) | 0 | 0.566 | 0.309 | 0.162 | 0.678 |
+| 3e-5 + 2,000-event warmup, bf16 | 5 | 0.800 | 0.153 | 0.050 | 0.905 |
+| 3e-5 + 2,000-event warmup, fp32 | 3 (rising; stopped) | 0.836 | 0.121 | 0.037 | 0.931 |
+
+- At 1e-4 the mask terms never fall (Dice 1.3-1.8); at 3e-5 they fall steadily (to 0.47 in fp32
+  by epoch 3). The learning rate, not the decoder, prevented the first tt̄ training.
+- At 3e-5 in bf16 the loss creeps up from epoch 5.9 and jumps in epochs 6-7 (InfoNCE rises
+  first, 1.60 → 2.5; the masks follow); the run ends at 0.717 / 0.217. The same pattern occurs
+  in epoch 0 at 1e-4. The fp32 run did not reach epoch 6, so precision is not yet established
+  as the cause.
+- fp32 costs 13.2 h per epoch on tt̄ (bf16: 1.9 h); fp32 throughout is not an option.
+
+Change: the output heads (activity, assignment logits, InfoNCE embedding, noise) run in fp32
+under autocast; only the transformer stays in bf16. Their outputs enter the losses directly,
+and bf16 keeps about three significant digits (a logit of 20 is off by about 0.1). Tested by
+the next tt̄ training (lr 3e-5, warmup) next to the continued fp32 probe.
 
 ## Deviations from HitPF, and why
 

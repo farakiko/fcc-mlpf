@@ -37,14 +37,18 @@ energy, have a response far below one.
 python train.py --inputs '<derived_v0.3>/cld_91gev/chunk_*.parquet' --test-frac 0.1 \
     --shard-cache DIR --epochs 20 --lr 1e-4 --slots 256 --outdir runs/c_91gev --mirror <persistent dir>
 # resume: same command + --resume runs/c_91gev/last.pt;  stability check: --check
+# optional: --warmup N (linear lr warmup over N events, then cosine); --monitor-every N (held-out
+#           monitor every N training events, written to train_steps.jsonl)
 ```
 
 Losses as [T] (Hungarian-matched focal + Dice, slot activity, noise, InfoNCE), with the Dice
 term weighted by hit energy and the slot activity weighted 1 (`--w-act`) in the loss and the
-Hungarian cost; the model runs in bf16 autocast on GPU (`--no-amp` for fp32). Readout: every
-hit joins its highest-probability slot among the active slots (activity > 0.5); no per-hit
-threshold, since CLD calorimeter hits carry no noise. Both choices differ from [T] for a
-measured reason (`DESIGN.md`, "Training study 2026-10-28").
+Hungarian cost. On GPU the transformer runs in bf16 autocast, the output heads and the losses
+in fp32 (`--no-amp`: everything in fp32). Learning rate 3e-5 with `--warmup 2000` on tt̄: at
+1e-4 the tt̄ training degrades after 40k events (`DESIGN.md`, "Training study 2026-10-30").
+Readout: every hit joins its highest-probability slot among the active slots (activity > 0.5);
+no per-hit threshold, since CLD calorimeter hits carry no noise. The activity weight and the
+readout differ from [T] for a measured reason (`DESIGN.md`, "Training study 2026-10-28").
 `--slots` must exceed the largest number of objects per event (printed at startup: 113 at
 91 GeV, 233 in tt̄). Checkpointing and exact resume follow [T].
 

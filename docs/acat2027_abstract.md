@@ -43,15 +43,15 @@ learnable from a small simulated sample.
 | Claim | Evidence so far | Status |
 |---|---|---|
 | CLD-only model does not transfer to IDEA | zero-shot IDEA eff 0.0025, fakes 0.991 (2026-10-13 study) | established |
-| A small IDEA admixture lets one model find tracks in both detectors | mixed model on IDEA: eff 0.727, fakes 0.047 | established, single seed; v1.1 seeds 1/2 running |
+| A small IDEA admixture lets one model find tracks in both detectors | mixed model on IDEA: eff 0.727, fakes 0.047 | established; three seeds 2026-10-30: IDEA eff 0.70-0.72 |
 | On CLD, ML track finding beats conformal tracking | eff ~0.75-0.79 vs 0.64, fakes ~half (every seed so far) | established |
 | CLD model generalizes over √s = 40-365 GeV | v1 (tt̄ only) and v2 (all energies) evaluated per energy | established |
 | [C] and [PF] with the same architecture | [C] started 2026-10-26 (`pipeline/pretrain/clustering/`) | to be done for the talk |
 
 Deliberately NOT claimed (keep it that way unless the evidence changes):
-- That IDEA admixture improves CLD. The 2026-10-28 seed runs (in-training monitor,
-  preliminary) put v1.1 at or below the CLD-only models; the full held-out evaluation of all
-  seeds and the CLD-only controls v3a/v3b decides it.
+- That IDEA admixture improves CLD. The 2026-10-30 seed study (full held-out, three seeds
+  each) puts v1.1 at or below the CLD-only models, and the CLD-only control v3a (same
+  number of events) above it in every seed (CLAUDE.md, "Seed study").
 - Any IDEA comparison to a baseline: IDEA has no classical tracking baseline in our files yet.
 - IDEA fitted-level performance: the Genfit covariances on IDEA are not honest at low pT
   (pending Andrea's setup).

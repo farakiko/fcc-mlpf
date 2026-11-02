@@ -3,7 +3,7 @@
 recipe (../tracking/train.py) with four calorimeter-specific changes (DESIGN.md §4, §6):
   - Dice term weighted by hit energy (in the Hungarian cost and in the loss); the focal term
     stays unweighted, so that low-energy hits remain supervised
-  - bf16 autocast for the model (losses in fp32): full attention over ~10k hits per event
+  - bf16 autocast for the transformer (output heads and losses in fp32): full attention over ~10k hits per event
   - in-training monitor with the HitPF matching (metrics.py): efficiency per class, fake rate
     and fake-energy fraction, per sample, on a fixed held-out subsample, for two readouts:
     "active" (hits to their argmax slot among slots with activity > 0.5; the reconstruction)
@@ -166,6 +166,8 @@ def main():
     ap.add_argument("--block", type=int, default=128)
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--warmup", type=int, default=0,
+                    help="linear learning-rate warmup over this many events (steps), then cosine")
     ap.add_argument("--w-act", type=float, default=1.0,
                     help="slot-activity weight in the loss and the Hungarian cost")
     ap.add_argument("--seed", type=int, default=0)
@@ -178,6 +180,8 @@ def main():
     ap.add_argument("--resume", default="")
     ap.add_argument("--ckpt-minutes", type=float, default=30)
     ap.add_argument("--log-every", type=int, default=20000)
+    ap.add_argument("--monitor-every", type=int, default=0,
+                    help="also run the held-out monitor every N training events (train_steps.jsonl)")
     ap.add_argument("--check", action="store_true",
                     help="stability check: 3 epochs, finiteness asserts every step, no checkpoints")
     args = ap.parse_args()
@@ -232,7 +236,12 @@ def main():
     model = ShowerFormer(NFEAT, d=args.dim, slots=args.slots, attn=args.attn, block=args.block).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs * n_train, 1))
+    T = max(args.epochs * n_train, 1)
+    if args.warmup:
+        sched = torch.optim.lr_scheduler.LambdaLR(
+            opt, lambda s: min(1.0, (s + 1) / args.warmup) * 0.5 * (1 + math.cos(math.pi * min(s, T) / T)))
+    else:
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=T)
     start_ep, best, resume = 0, 0.0, None
     if args.resume:
         ck = torch.load(args.resume, map_location=dev, weights_only=False)
@@ -285,6 +294,17 @@ def main():
                           + " ".join(f"{k} {v:.3f}" for k, v in srec["terms"].items())
                           + f")  lr {srec['lr']:.2e}  [{srec['sec']:.0f}s]", flush=True)
                     win = []; twin = dict.fromkeys(TERMS, 0.0)
+                if args.monitor_every and nev % args.monitor_every == 0:
+                    model.eval()
+                    mon = {r: {d: dict(zip(("eff", "fake", "fake_e"), (round(float(v), 4) for v in summary(a)[1:])))
+                               for d, a in per.items()} for r, per in evaluate(model, eval_sub, dev, amp).items()}
+                    model.train()
+                    with open(steps_path, "a") as f:
+                        f.write(json.dumps(dict(ep=ep, nev=nev, frac=round(ep + nev / max(n_train, 1), 4),
+                                                monitor=mon)) + "\n")
+                    print(f"  ep {ep} {nev}/{n_train} ev  monitor " + "  ".join(
+                        f"{r} {d}: eff {m['eff']:.3f} fake {m['fake']:.3f} fakeE {m['fake_e']:.3f}"
+                        for r, per in mon.items() for d, m in per.items()), flush=True)
             if (args.ckpt_minutes and not args.check
                     and time.time() - t_ck > 60 * args.ckpt_minutes and j + 1 < len(order)):
                 _save(state(ep=ep, pos=j + 1, order=order, tot=tot, nev=nev,

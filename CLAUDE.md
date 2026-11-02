@@ -109,6 +109,22 @@ Its "end-to-end" means hits to particles through the staged chain, not different
   `ListOfTypesToSkip=[0]` (GGTF convention; fresh collections have type 0 → all skipped).
 - **Surviving caveats on the mixed result**: single seed per configuration; the "any extra
   diverse data" alternative (CLD-duplicates control would discriminate); CLD-dominant mix.
+- **Seed study (2026-10-30) RETIRES "mixing improves CLD"**. Full held-out tt̄ (45 chunks,
+  9000 ev; final epoch; seeds 0/1/2 on c14a8b7 code; run dirs and eval in /shared/runs/seed_eval/),
+  eff / fake: v1 0.755/0.081, 0.739/0.086, 0.759/0.089 (orig 0.767/0.087); v1.1 0.750/0.096,
+  0.745/0.103, 0.742/0.100 (orig 0.790/0.073); v3a = cld_ttbar + 22,400 run-2 ev, matched to
+  v1.1 in events/steps: 0.774/0.091, 0.757/0.079, 0.777/0.073; v3b = + all 91,100 run-2 ev
+  (~ v1.1 hits): 0.767/0.075, 0.749/0.087, 0.817/0.063. IDEA held-out (v1.1): 0.703/0.092,
+  0.714/0.095, 0.715/0.096 (orig 0.727/0.050). The independent run-2 held-out set (51 chunks)
+  gives the same numbers within 0.2 points for every model. Conclusions: (1) seed spread is
+  1-2 points typically but heavy-tailed (v3b s2 +5); single-seed differences below ~3 points
+  mean nothing. (2) With current-code seeds, IDEA admixture does not improve CLD (efficiency
+  at or below CLD-only, highest fake rate); more CLD tt̄ at the same step count (v3a) is better
+  in every seed. (3) The ORIGINAL v1.1 (t_mixed) sits 4-5 points above all three repeats on
+  CLD and has half their IDEA fake rate: a real full-held-out result, not a monitor artifact,
+  and unexplained (code/data/env checks found no difference; lucky draw in a heavy tail is
+  possible). best.pt == final epoch for nearly every run. The tt̄ baseline fake rate in the
+  current eval is 0.193 (0.156 in the 10-13 numbers above came from the older eval).
 - **2026-10-13 study artifacts** (local `plots/trk_fit/`, gitignored): overlay_eval_{cld,idea}.pdf
   (+ `_split.pdf`: prompt vs displaced efficiency — the displaced panel shows the ML trackers
   +15–20 points over baseline ON THE PLATEAU, the HF headline), ml_vs_baseline_fitted.pdf
