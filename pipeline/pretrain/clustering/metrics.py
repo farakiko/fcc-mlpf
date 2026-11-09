@@ -6,9 +6,14 @@ Shared [C] evaluation definitions: ONE implementation, used by the in-training m
   iou_match   a reconstructed cluster and a truth object are paired by a one-to-one Hungarian
               assignment on the intersection-over-union of their hit sets (hit counts);
               pairs with IoU < 0.25 are not matched
-  efficiency  fraction of truth objects matched (binned in true energy, per class)
-  fake rate   fraction of reconstructed clusters without a match; fake energy = fraction of
-              the clustered energy in unmatched clusters
+  efficiency  fraction of truth objects matched (true energy >= 0.1 GeV; binned in true
+              energy, per class)
+  fake rate   fraction of reconstructed clusters (hit-energy sum >= 0.1 GeV) without a match;
+              fake energy = fraction of the energy of those clusters in unmatched ones. The
+              0.1 GeV cluster threshold mirrors the object one (and eval.py's binning).
+
+hitpf_eff / hitpf_fakes reproduce HitPF's figures (its bins, uncertainties and PDG classes),
+for plot_hitpf.py.
 """
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -57,11 +62,15 @@ def accumulate(a, pred, ev):
     ok = (b >= 0) & (b < len(E_EDGES) - 1)
     np.add.at(a["obj"], (ev["obj_cls"][ok], b[ok]), 1)
     np.add.at(a["found"], (ev["obj_cls"][ok], b[ok]), matched[ok])
-    a["n_clu"] += len(cl); a["n_fake"] += len(cl) - len(pairs); a["n_ev"] += 1
-    pred = np.asarray(pred); good = {c for c, _ in pairs}
-    clustered = pred >= 0
-    a["e_clu"] += float(ev["e"][clustered].sum())
-    a["e_fake"] += float(ev["e"][clustered & ~np.isin(pred, list(good))].sum())
+    a["n_ev"] += 1
+    if not len(cl):
+        return
+    pred = np.asarray(pred); on = pred >= 0
+    ecl = np.bincount(pred[on], weights=ev["e"][on], minlength=int(cl.max()) + 1)[cl]
+    sel = ecl >= E_EDGES[0]
+    fake = sel & ~np.isin(cl, [c for c, _ in pairs])
+    a["n_clu"] += int(sel.sum()); a["n_fake"] += int(fake.sum())
+    a["e_clu"] += float(ecl[sel].sum()); a["e_fake"] += float(ecl[fake].sum())
 
 
 def summary(a):
@@ -69,3 +78,46 @@ def summary(a):
     eff_cls = a["found"].sum(1) / np.maximum(a["obj"].sum(1), 1)
     return (eff_cls, a["found"].sum() / max(a["obj"].sum(), 1), a["n_fake"] / max(a["n_clu"], 1),
             a["e_fake"] / max(a["e_clu"], 1e-12))
+
+
+# HitPF figures (development repo src/utils/inference/efficiency_calc_and_plots.py:
+# calculate_eff, calculate_fakes; classes = src/utils/pid_conversion.py::our_to_pandora_mapping).
+# Bins are (lo, hi], points sit at the arithmetic bin centre, empty bins are skipped.
+HITPF_BINS = np.exp(np.arange(np.log(0.1), np.log(80), 0.2))       # [GeV]
+HITPF_PDG = {                                                      # signed truth PDG per class
+    "photon": [22], "electron": [11, -11], "muon": [13, -13],
+    "charged_hadron": [211, -211, 2212, -2212, 321, -321, 3222, 3112, 3224, -3112, -3224],
+    "neutral_hadron": [2112, 130, 310, 3122, 3212]}               # objects of other PDGs are in no class
+
+
+def hitpf_err(n_r, n):
+    """HitPF's uncertainty on the ratio n_r / n (both counts Poisson, added in quadrature)."""
+    return np.sqrt((n_r / n**2 * np.sqrt(n))**2 + (np.sqrt(n_r) / n)**2)
+
+
+def hitpf_eff(true_e, found, bins=HITPF_BINS):
+    """Truth objects (true energy, matched?) -> (bin low edge, high edge, centre, efficiency,
+    uncertainty), one entry per non-empty bin."""
+    out = []
+    for lo, hi in zip(bins[:-1], bins[1:]):
+        m = (true_e > lo) & (true_e <= hi)
+        n, n_r = m.sum(), found[m].sum()
+        if n:
+            out.append((lo, hi, 0.5 * (lo + hi), n_r / n, hitpf_err(n_r, n)))
+    return tuple(np.array(v) for v in zip(*out)) if out else (np.array([]),) * 5
+
+
+def hitpf_fakes(e, fake, bins=HITPF_BINS):
+    """Clusters (energy, unmatched?) -> (bin low edge, high edge, centre, fake rate, its
+    uncertainty, fake-energy fraction, its uncertainty), per non-empty bin of cluster energy."""
+    out = []
+    for lo, hi in zip(bins[:-1], bins[1:]):
+        m = (e > lo) & (e <= hi)
+        n = m.sum()
+        if not n:
+            continue
+        E, f = e[m], np.where(fake[m], e[m], 0.0)
+        R = f.sum() / E.sum()
+        out.append((lo, hi, 0.5 * (lo + hi), fake[m].sum() / n, hitpf_err(fake[m].sum(), n), R,
+                    np.sqrt(np.sum((f - R * E)**2)) / E.sum()))
+    return tuple(np.array(v) for v in zip(*out)) if out else (np.array([]),) * 7

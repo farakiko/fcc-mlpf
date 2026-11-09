@@ -4,7 +4,7 @@ with the HitPF definitions of metrics.py (IoU of hit sets >= 0.25, one-to-one Hu
 No track enters anywhere.
 
 Clusterings compared (any number of models + two baselines):
-  model       ShowerFormer readout (hits -> argmax over active slots), one per --model
+  model       HEPTv2 readout (hits -> argmax over active slots), one per --model
   Pandora     PandoraClusters from the REC files (uses tracks: more information than [C])
   NN floor    parameter-free nearest-neighbour clustering: hits closer than --nn-link mm are
               connected, connected components with fewer than --nn-min-hits hits are dropped;
@@ -16,7 +16,8 @@ Output (--outdir), per sample (dataset directory, e.g. cld_91gev), one PDF per p
   fake_energy_<sample>      fraction of the clustered energy in unmatched clusters vs cluster energy
   response_<class>_<sample> matched clusters: hit-energy sum / true energy vs true energy (median, 16-84%)
   summary.txt               inclusive efficiency per class, fake rate, fake energy, per clustering
-  eval_<sample>.npz         binned counts, for overlays
+  eval_<sample>.npz         binned counts, for overlays; per truth object (o_e, o_pdg, o_cls, o_ecl =
+                            matched cluster energy or NaN) and per cluster (c_e, c_fake), for plot_hitpf.py
 
   python eval.py --model "v0=runs/c_91gev/best.pt" --inputs '<derived_v0.3>/cld_91gev/chunk_000[0-9]*.parquet' \
       --shard-cache DIR --max-events 2000 --outdir eval_c91 [--exp CLD --exp-text "Full Sim"]
@@ -57,7 +58,8 @@ def nn_clusters(xyz, link_mm, min_hits):
 def new_acc():
     nb, nc = len(E_EDGES) - 1, len(CLASSES)
     return dict(obj=np.zeros((nc, nb)), found=np.zeros((nc, nb)), clu=np.zeros(nb), fake=np.zeros(nb),
-                e_clu=np.zeros(nb), e_fake=np.zeros(nb), resp_cls=[], resp_e=[], resp=[], n_ev=0)
+                e_clu=np.zeros(nb), e_fake=np.zeros(nb), resp_cls=[], resp_e=[], resp=[], n_ev=0,
+                o_e=[], o_pdg=[], o_cls=[], o_ecl=[], c_e=[], c_fake=[])
 
 
 def accumulate(a, pred, ev):
@@ -79,6 +81,12 @@ def accumulate(a, pred, ev):
             a["clu"][bc] += 1; a["e_clu"][bc] += ecl[c]
             if c not in good:
                 a["fake"][bc] += 1; a["e_fake"][bc] += ecl[c]
+    o_ecl = np.full(ev["K"], np.nan)                                 # per object / cluster, for plot_hitpf.py
+    for c, o in pairs:
+        o_ecl[o] = ecl[c]
+    a["o_e"] += list(ev["obj_e"]); a["o_pdg"] += list(ev["obj_pdg"]); a["o_cls"] += list(ev["obj_cls"])
+    a["o_ecl"] += list(o_ecl)
+    a["c_e"] += [ecl[c] for c in cl]; a["c_fake"] += [c not in good for c in cl]
     a["n_ev"] += 1
 
 
@@ -89,6 +97,7 @@ def main():
     ap.add_argument("--shard-cache", default="")
     ap.add_argument("--max-events", type=int, default=0, help="per sample; 0 = all")
     ap.add_argument("--act-thr", type=float, default=0.5)
+    ap.add_argument("--no-amp", action="store_true", help="run the models in fp32 (default: bf16 autocast on GPU)")
     ap.add_argument("--nn-link", type=float, default=20.0, help="NN floor: link distance [mm]")
     ap.add_argument("--nn-min-hits", type=int, default=10)
     ap.add_argument("--outdir", default="eval_c")
@@ -101,7 +110,7 @@ def main():
     if hasattr(torch.backends.cuda, "enable_cudnn_sdp"):
         torch.backends.cuda.enable_cudnn_sdp(False)
     models = [(s.split("=", 1)[0], load_checkpoint(s.split("=", 1)[1], dev)) for s in a.model]
-    amp = dev.type == "cuda"
+    amp = dev.type == "cuda" and not a.no_amp
     files = sorted(sum([globlib.glob(p) for p in a.inputs], []))
     assert files, f"no inputs match {a.inputs}"
     sources = build_shards(files, a.shard_cache)[0] if a.shard_cache else files
@@ -180,6 +189,8 @@ def main():
                 col, mk = sty[n]
                 ax.plot(ctr, q[1], mk, color=col, ms=7, label=n)
                 ax.fill_between(ctr, q[0], q[2], color=col, alpha=0.12)
+            if not any(np.isfinite(l.get_ydata()).any() for l in ax.lines):   # too few matched objects
+                plt.close(fig); continue
             ax.axhline(1, color="k", lw=1, ls=":")
             save(fig, ax, f"response_{c}_{d}", rl, f"{LABELS[c]}: cluster energy / true energy (median, 16-84%)",
                  ylim=(0, 1.6))

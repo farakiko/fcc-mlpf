@@ -32,7 +32,7 @@ class Block(nn.Module):
         return h + self.ffn(self.n2(h))
 
 
-class ShowerFormer(nn.Module):
+class HEPTv2(nn.Module):
     def __init__(self, nfeat, d=128, enc_layers=4, dec_layers=2, heads=8, slots=256,
                  attn="full", block=128):
         super().__init__()
@@ -112,7 +112,7 @@ def etaphi_from_x(x):
 
 
 def load_checkpoint(path, dev):
-    """best.pt / last.pt / ep_NNN.pt -> ShowerFormer in eval mode (architecture from the saved args)."""
+    """best.pt / last.pt / ep_NNN.pt -> HEPTv2 in eval mode (architecture from the saved args)."""
     ck = torch.load(path, map_location=dev, weights_only=False)
     a = ck["args"]
     nfeat = a.get("nfeat")
@@ -122,6 +122,6 @@ def load_checkpoint(path, dev):
             "c_data", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data.py"))
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
         nfeat = mod.NFEAT
-    model = ShowerFormer(nfeat, d=a["dim"], slots=a["slots"], attn=a["attn"], block=a["block"]).to(dev)
+    model = HEPTv2(nfeat, d=a["dim"], slots=a["slots"], attn=a["attn"], block=a["block"]).to(dev)
     model.load_state_dict(ck["state_dict"]); model.eval()
     return model

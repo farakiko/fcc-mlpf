@@ -17,7 +17,9 @@ the same events.
 subdetector role: HitPF's (E, x⃗, s) in the encoding of the [T] table), the object index of
 every hit (the calorimeter mother of its largest-fraction MC particle; −1 = no truth link),
 and per object the true energy, the deposited energy and the class (photon, electron, muon,
-charged hadron, neutral hadron). Every object is a target. Events are cached as compressed
+charged hadron, neutral hadron). An object is a target if its hits hold more than 10 MeV
+(HitPF); the hits of the others are labelled noise. The threshold is applied when shards are
+loaded, so shard caches built before it stay valid. Events are cached as compressed
 shards, one per chunk (about 0.3 MB per tt̄ event):
 
 ```bash
@@ -43,9 +45,10 @@ python train.py --inputs '<derived_v0.3>/cld_91gev/chunk_*.parquet' --test-frac 
 
 Losses as [T] (Hungarian-matched focal + Dice, slot activity, noise, InfoNCE), with the Dice
 term weighted by hit energy and the slot activity weighted 1 (`--w-act`) in the loss and the
-Hungarian cost. On GPU the transformer runs in bf16 autocast, the output heads and the losses
-in fp32 (`--no-amp`: everything in fp32). Learning rate 3e-5 with `--warmup 2000` on tt̄: at
-1e-4 the tt̄ training degrades after 40k events (`DESIGN.md`, "Training study 2026-10-30").
+Hungarian cost. **Recipe: `--lr 3e-5 --warmup 2000 --no-amp`.** At lr 1e-4 the tt̄ training
+degrades within the first epoch; in bf16 autocast (the default on GPU; output heads and losses
+always in fp32) it breaks at epoch 6. fp32 costs 13.2 h per tt̄ epoch on a MIG 1g.12gb slice
+(`DESIGN.md`, "Training study 2026-10-30").
 Readout: every hit joins its highest-probability slot among the active slots (activity > 0.5);
 no per-hit threshold, since CLD calorimeter hits carry no noise. The activity weight and the
 readout differ from [T] for a measured reason (`DESIGN.md`, "Training study 2026-10-28").
@@ -60,12 +63,14 @@ energy fraction. It reports two readouts: `active` (the reconstruction) and `all
 all slots: the quality of the masks, independent of the activity head). Every loss term is
 logged separately (`terms`); the total is dominated by InfoNCE and the focal term and is not
 a measure of clustering quality.
-Reference on 100 held-out tt̄ events, same matching: Pandora clusters reach an inclusive
-efficiency of 0.874 at a fake rate of 0.038 (photons 0.89, electrons 0.72, muons 0.90,
-charged hadrons 0.91, neutral hadrons 0.67); Pandora uses tracks, this model does not. A
-parameter-free nearest-neighbour clustering (hits linked within 15-25 mm, clusters below 10
-hits dropped) reaches about 0.79 at 0.07 on 50 of those events: the floor any learned
-clustering has to clear. On 1,000 held-out 91 GeV events, Pandora reaches 0.864 at 0.036.
+The fake rate counts clusters with a hit-energy sum of at least 0.1 GeV, the object
+threshold of the efficiency (`metrics.py`, shared with `eval.py`).
+Reference on 1,000 held-out tt̄ events: Pandora clusters reach an inclusive efficiency of
+0.867 at a fake rate of 0.034 (photons 0.88, electrons 0.73, muons 0.87, charged hadrons 0.91,
+neutral hadrons 0.66); Pandora uses tracks, this model does not. A parameter-free
+nearest-neighbour clustering (hits linked within 20 mm, clusters below 10 hits dropped) reaches
+0.782 at 0.080: the floor any learned clustering has to clear. On 1,000 held-out 91 GeV events:
+Pandora 0.864 at 0.035, floor 0.779 at 0.078.
 
 ## Evaluation
 
@@ -82,3 +87,16 @@ fraction vs cluster energy, and the energy response (hit-energy sum over true en
 matched clusters per class; `summary.txt` holds the inclusive numbers and `eval_<sample>.npz`
 the binned counts. On 1,000 held-out 91 GeV events: Pandora 0.864 / 0.035 (fake energy
 0.013), nearest-neighbour floor (20 mm, 10 hits) 0.779 / 0.078 (0.024).
+
+`plot_hitpf.py` redraws the comparison with HitPF's figure definitions, from the per-object and
+per-cluster records in `eval_<sample>.npz`: bins ln-spaced by 0.2 from 0.1 to 80 GeV, HitPF's
+uncertainties and error bands, and HitPF's truth-PDG classes (`metrics.HITPF_PDG`; objects of
+other PDGs, e.g. antineutrons, belong to no class there, whereas `eval.py` classes neutral
+hadrons by charge). The matching is the same. One deviation is forced by the stage: HitPF
+counts fakes per predicted class in calibrated energy, which needs a PID and an energy
+regression; [C] clusters carry neither, so fakes are counted over all clusters, in hit-energy
+sum, for every clustering alike.
+
+```bash
+python plot_hitpf.py --eval-dir eval_c91 --outdir hitpf_c91 --exp CLD --exp-text "Full Sim"
+```

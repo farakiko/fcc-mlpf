@@ -39,7 +39,7 @@ from scipy.optimize import linear_sum_assignment
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import CLASSES, NFEAT, build_shards, load_shard
 from metrics import E_EDGES, accumulate, new_acc, summary
-from model import ShowerFormer, etaphi_from_x
+from model import HEPTv2, etaphi_from_x
 
 W_ASSIGN, W_DICE, W_BG, W_NCE = 200.0, 2.0, 1.8, 12.0      # as [T]; activity weight: --w-act
 TAU = 0.07
@@ -233,7 +233,7 @@ def main():
           f"{max(trn_meta['nhit_max'], tst_meta['nhit_max'])} | device {dev}{' bf16' if amp else ''}", flush=True)
     assert args.slots > kmax, "need more slots than max objects/event"
 
-    model = ShowerFormer(NFEAT, d=args.dim, slots=args.slots, attn=args.attn, block=args.block).to(dev)
+    model = HEPTv2(NFEAT, d=args.dim, slots=args.slots, attn=args.attn, block=args.block).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     T = max(args.epochs * n_train, 1)

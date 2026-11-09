@@ -17,15 +17,20 @@ attributed through `CalohitMCTruthLink` to its largest-weight MC particle; that 
 replaced by its *calorimeter mother*: walk up the first-parent chain while the production
 vertex lies inside the calorimeter (outside the ECAL-face dodecagon of apothem 2150 mm, or
 |z| > 2307 mm), except that a particle flagged backscattered and not decayed in the tracker
-stops the walk and is an object of its own. Hits without a link are noise (none in CLD).
+stops the walk and is an object of its own (a rule that never fires in CLD; see Backscatter
+below). An object is a target if its hits hold more than 10 MeV; the hits of the others are
+noise, as are hits without a link (none in CLD).
 
 **What the simulation already does.** The DD4hep tracking-volume particle handler, active in
 all our CLD samples, stores only particles produced inside the tracking volume (R ≤ 2145 mm,
 |z| ≤ 2300 mm, 5–7 mm inside the ECAL face) and credits the energy of every unstored shower
 particle to its stored ancestor. Of 11,619 linked particles in 100 tt̄ events, 114 (1.0%,
 0.13% of the calorimeter energy) start inside the calorimeter; the walk handles them:
-- *Backscatter* (104 of the 114, 1.0 per event, 0.03% of the energy): separate objects, as in
-  HitPF.
+- *Backscatter* (104 of the 114, 1.0 per event, 0.03% of the energy): merged into the
+  particle that crossed the calorimeter face, in HitPF as here. Every linked backscattered
+  particle also carries the decayed-in-tracker flag (99/99 in 100 tt̄ events, 39/39 in 100
+  events at 91 GeV), so the stop rule never fires. (Corrected 2026-11-03: this note first
+  called them separate objects.)
 - *Generator decays inside the calorimeter*: generator particles are always stored, so the
   products of a K⁰S or Λ that the generator decays beyond the calorimeter face appear as
   status-1 particles (2 decays in 100 events, 0.1% of the energy). The walk assigns them to
@@ -40,10 +45,13 @@ particle to its stored ancestor. Of 11,619 linked particles in 100 tt̄ events, 
 - *Muons*: one object per muon, holding its ECAL/HCAL MIP trail and its muon-system hits.
   2.7 muons per tt̄ event; 34% reach the muon system, 100% of those above 3 GeV. Hadrons that
   punch through (0.8 per event) keep their muon-system hits; muons own 73% of them.
-- *Low-energy objects*: no target threshold (HitPF: every linked object is a target; the
-  efficiency plots start at 0.1 GeV of true energy, and DPC's ρ_min = 0.05 GeV sets the
-  smallest candidate at inference). 12.6% of the objects deposit less than 0.1 GeV (0.24% of
-  the energy) and 6.4% have one or two hits. A slot decoder needs more slots than the largest
+- *Low-energy objects*: an object is a target if its hits hold more than 10 MeV (HitPF:
+  legacy preprocessing, `utils.py`, the cut on the energy of each calorimeter mother under
+  hard labels; the hits of the other objects become noise). The cut removes 2.0 objects per
+  tt̄ event (1.7%; 113.0 targets remain), photons and electrons with at most two hits.
+  (Corrected 2026-11-03: this note first stated that HitPF has no target threshold.) The
+  efficiency counts objects of true energy >= 0.1 GeV. 12.6% of the objects deposit less than
+  0.1 GeV (0.24% of the energy) and 6.4% have one or two hits. A slot decoder needs more slots than the largest
   object count of the corpus: 233 in these 100 tt̄ events; measured on the full corpus in step 1.
 
 **Objects per class** (class from the object's PDG; dep/E = calibrated deposited energy over
@@ -233,10 +241,47 @@ held-out tt̄ events; Pandora 0.87 / 0.034). Three probes with the same schedule
   as the cause.
 - fp32 costs 13.2 h per epoch on tt̄ (bf16: 1.9 h); fp32 throughout is not an option.
 
-Change: the output heads (activity, assignment logits, InfoNCE embedding, noise) run in fp32
-under autocast; only the transformer stays in bf16. Their outputs enter the losses directly,
-and bf16 keeps about three significant digits (a logit of 20 is off by about 0.1). Tested by
-the next tt̄ training (lr 3e-5, warmup) next to the continued fp32 probe.
+Follow-up (2026-11-02/03): a fourth tt̄ run with lr 3e-5 + warmup, the transformer in bf16 and
+the output heads (activity, assignment logits, InfoNCE embedding, noise) in fp32 broke at
+epoch 6 like the bf16 probe (InfoNCE 1.64 → 2.55 within the epoch; efficiency 0.786 at epoch 4,
+0.646 at epoch 10). Moving the heads to fp32 does not help. The fp32 run, continued, improves
+in every epoch through epoch 5 (training loss 4.80, 3.18, 2.81, 2.37, 2.21, 2.13; held-out loss
+2.07; InfoNCE flat at 1.29, against 1.62-1.64 in bf16 even before the break). At epoch 5, on
+1,000 held-out events (`eval.py`, models in fp32):
+
+| | tt̄ eff | tt̄ fake | 91 GeV eff | 91 GeV fake |
+|---|---:|---:|---:|---:|
+| fp32, epoch 5 | 0.861 | 0.061 | 0.913 | 0.111 |
+| bf16 transformer + fp32 heads, epoch 5 | 0.779 | 0.090 | 0.840 | 0.128 |
+| Pandora (uses tracks) | 0.867 | 0.034 | 0.864 | 0.035 |
+| nearest-neighbour floor | 0.782 | 0.080 | 0.779 | 0.078 |
+
+**Recipe (until a cheaper stable configuration is shown):** learning rate 3e-5 with
+`--warmup 2000`, and `--no-amp` (fp32 throughout). Do not train [C] with lr 1e-4 (degrades within
+the first epoch on tt̄) or in bf16 autocast (breaks at epoch 6, with or without fp32 heads). The
+cost is 13.2 h per tt̄ epoch on a MIG 1g.12gb slice (bf16: 1.9 h). Open: whether fp32 stays
+stable through epochs 6-7 (pending), TF32 matrix multiplies as a faster stable option, and the
+conditioning of the losses (InfoNCE temperature 0.07, focal weight 200) as the reason the model
+is precision-sensitive at all.
+
+## Design check 2026-11-03: the targets are HitPF's
+
+The legacy preprocessing (`get_genparticles_and_adjacencies`, unmodified) and this code
+(`postprocessing/cld.py` + `data.py`) were run on the same EDM4hep events and compared hit by
+hit. Before the 10 MeV threshold the partitions of the calorimeter hits into objects are
+identical in every event: 100 tt̄ events (854k hits), 100 events at 91 GeV (272k hits) and
+200 tt̄ events of an older production. The only difference was the threshold (99.976% of the
+tt̄ hits agree with it applied on one side only), now adopted. Inputs (six calorimeter and
+muon-system collections, no hit cuts), the hit label (largest link weight), the calorimeter
+mother walk and its geometry, the true energy and the IoU matching are the same. Three
+differences remain, none of them in the targets: HitPF adds tracks as nodes (they change no
+hit label, but they enter its IoU, which helps charged objects with few hits); its class table
+puts Ξ⁻ and charged nuclei among neutral hadrons; its efficiency curves end at 80 GeV.
+
+Measured on these events: 0.50% of the hits are shared between objects (1.5% of the energy),
+hard labels assign 99.86% of the energy correctly, 115.1 objects per tt̄ event before the
+threshold (43.1 at 91 GeV), as stated in §1-2. HitPF quotes "25 particles" per 91 GeV event
+(CLD_o2_v05); that number does not correspond to our object count (43 objects, 28 above 0.5 GeV).
 
 ## Deviations from HitPF, and why
 
@@ -250,8 +295,8 @@ the next tt̄ training (lr 3e-5, warmup) next to the continued fp32 probe.
 
 ## Decisions requested
 
-1. Truth objects and properties as HitPF (§1), including backscatter as separate objects and
-   no target threshold.
+1. Truth objects and properties as HitPF (§1), including the 10 MeV target threshold
+   (revised 2026-11-03, see "Design check 2026-11-03").
 2. Hard labels, fractions stored (§2).
 3. First feature set = HitPF's (E, x⃗, role); time and material features as ablations (§3).
 4. HitPF matching and metrics (§4); legacy OC baseline retrained calorimeter-only.

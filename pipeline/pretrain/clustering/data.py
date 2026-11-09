@@ -5,7 +5,8 @@ schema columns and the file metadata. Same structure as ../tracking/data.py (sha
 
 Truth (HitPF, DESIGN.md §1-2): the object of a calorimeter or muon-system hit is the
 calorimeter mother of its largest-fraction MC particle, mc_calomother[chit_mc]; hits without a
-truth link are noise (y = -1). Every object is a target (no threshold).
+truth link are noise (y = -1). An object is a target if its hits hold more than MIN_DEP = 10 MeV
+(HitPF's threshold, legacy preprocessing utils.py); the hits of the others become noise.
 
 Each event -> dict(
   x[N,F], e[N]            hit features, hit energy [GeV]
@@ -27,6 +28,7 @@ import numpy as np
 import pyarrow.parquet as pq
 import torch
 
+MIN_DEP = 0.01                                 # [GeV] minimum deposited energy of a target (HitPF)
 NROLE = 7                                      # schema.CALO_ROLES (ecal b/e, hcal b/e/ring, muon b/e)
 NFEAT = 8 + NROLE
 CLASSES = ("photon", "electron", "muon", "charged_hadron", "neutral_hadron")
@@ -55,6 +57,21 @@ def object_class(pdg, charge):
                     np.where(charge != 0, 3, 4)))).astype(np.int64)
 
 
+def select_objects(ev, min_dep=MIN_DEP):
+    """Drop objects with deposited energy <= min_dep (their hits -> noise) and renumber the
+    rest. Idempotent; applied when building and when loading shards, so caches built before the
+    threshold stay valid."""
+    keep = ev["obj_dep"] > min_dep
+    if keep.all():
+        return ev
+    new = np.full(ev["K"] + 1, -1, np.int64)
+    new[:-1][keep] = np.arange(keep.sum())
+    ev = dict(ev, y=new[ev["y"]], K=int(keep.sum()))       # y = -1 indexes the trailing -1
+    for k in ("obj_e", "obj_dep", "obj_cls", "obj_pdg"):
+        ev[k] = ev[k][keep]
+    return ev
+
+
 def load_parquet(path):
     """-> list of event dicts (see module docstring)."""
     t = pq.read_table(path, columns=COLS)
@@ -72,14 +89,14 @@ def load_parquet(path):
         y = np.searchsorted(keep, obj_mc)
         y[obj_mc < 0] = -1
         e = c["chit_e"].astype(np.float32)
-        events.append(dict(
+        events.append(select_objects(dict(
             x=featurize(c), e=e, y=y.astype(np.int64), K=len(keep),
             obj_e=c["mc_e"][keep].astype(np.float32),
             obj_dep=np.bincount(y[y >= 0], weights=e[y >= 0], minlength=len(keep)).astype(np.float32),
             obj_cls=object_class(c["mc_pdg"][keep], c["mc_charge"][keep]),
             obj_pdg=c["mc_pdg"][keep].astype(np.int64),
             pandora=c["chit_pandora"].astype(np.int64),
-            detector=det, dataset=dataset))
+            detector=det, dataset=dataset)))
     return events
 
 
@@ -152,7 +169,7 @@ def build_shards(parquets, shard_dir, jobs=1):
 def load_shard(path):
     with open(path, "rb") as f:
         evs = torch.load(io.BytesIO(zlib.decompress(f.read())), weights_only=False)
-    return [_expand(c) for c in evs]
+    return [select_objects(_expand(c)) for c in evs]
 
 
 if __name__ == "__main__":
