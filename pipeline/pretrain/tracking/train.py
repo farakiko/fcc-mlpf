@@ -22,6 +22,10 @@ checkpoints are written atomically. Outputs per run: metrics.jsonl (per epoch: l
 per-sample DM efficiency/fake rate, efficiency counts in true-pT bins), train_steps.jsonl
 (running training loss), training_curves.pdf (plot_training.py), ep_<NNN>.pt (weights after
 every epoch, for eval.py at any epoch), best.pt, last.pt.
+Finetuning: --init <checkpoint> starts from that checkpoint's weights (and architecture) with a
+fresh optimizer and learning-rate schedule; everything else is a normal run:
+  python train.py --inputs <held-out chunks> <N training chunks> --test-first 5 \
+      --init runs/t_cld_all/ep_019.pt --epochs 20 --outdir runs/ft_idea_n<N>
 """
 import argparse
 import glob as globlib
@@ -202,6 +206,9 @@ def main():
                          "many minutes (0 = end of epoch only)")
     ap.add_argument("--log-every", type=int, default=20000,
                     help="append the running training loss to train_steps.jsonl every N events")
+    ap.add_argument("--init", default="",
+                    help="finetuning: start from this checkpoint's weights and architecture "
+                         "(fresh optimizer and schedule; --resume still takes precedence)")
     ap.add_argument("--seed", type=int, default=0,
                     help="run seed: initialization, data order, InfoNCE anchors (default 0 = the "
                          "runs since 2026-10-15)")
@@ -284,9 +291,16 @@ def main():
 
     print(f"{n_train} train / {len(val_sub)} val-loss / {len(eval_sub)} eval events | "
           f"samples {dets} | max K {kmax} (slots {args.slots}) | device {dev}", flush=True)
+    if args.init:                                     # the architecture comes with the weights
+        init = torch.load(args.init, map_location="cpu", weights_only=False)
+        for k in ("dim", "slots", "attn", "block"):
+            setattr(args, k, init["args"][k])
     assert args.slots > kmax, "need more slots than max tracks/event"
 
     model = TrackFormer(d=args.dim, slots=args.slots, attn=args.attn, block=args.block).to(dev)
+    if args.init:
+        model.load_state_dict(init["state_dict"]); del init
+        print(f"initialized from {args.init}", flush=True)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs * n_train, 1))

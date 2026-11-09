@@ -158,6 +158,17 @@ fake. The in-training monitor uses the same code.
   several trainings and the baseline, per sample, given either single files or eval.py
   output directories (then with a summary page of the inclusive efficiency and fake rate
   per sample; `--no-baseline` omits the baseline curves). This level is cheap enough to run on every checkpoint.
+- **IDEA community convention** — `eval.py --convention idea` adds the definitions of the IDEA
+  tracking validation (A. De Vita), so IDEA results can be read against IDEA studies. The
+  matching is a global one-to-one (Hungarian) assignment maximizing the shared hits, under
+  three criteria: double majority with ≥ 0.5 (`dm`), purity ≥ 0.75 with no completeness
+  requirement (`purity75`, "IDEA purity"), and no threshold (`hungarian`). The inclusive
+  efficiency and fake rate count every MC particle with a hit and every track; the efficiency
+  curves, versus true pT, polar angle and production radius, select particles with ≥3 hits,
+  10° < θ < 170° and generator status 0 or 1 after the matching (no pT cut). Hit efficiency
+  and hit purity of the matched pairs are reported as well. The implementation reproduces the
+  reference code's counts exactly (checked on 200 IDEA events, all three criteria, inclusive
+  and binned).
 - **Fitted level, Genfit** — the chain in `genfit/` fits the candidates, and
   `genfit/analyze_fitted.py` reports the chain efficiency (found and fit converged), the
   fake rate versus Genfit pT, the fit-failure rate, resolutions, pulls and the

@@ -11,6 +11,9 @@ monitor), eval.py (finding level) and genfit/analyze_fitted.py (fitted level).
                             charged particle (analytic helix from its MC production point,
                             transported to the PCA to the beamline), edm4hep conventions
   pt_from_omega          -- transverse momentum of a fitted track state
+  overlap_table /        -- the IDEA community convention (one-to-one Hungarian matching,
+  one_to_one_match          criteria dm / purity75 / hungarian, no truth cuts in the
+                            inclusive numbers), for eval.py --convention idea
 
 B is always an explicit argument (from the parquet metadata `B_tesla`, or the detector
 configuration in genfit/detectors.py) -- never a default.
@@ -50,6 +53,47 @@ def dm_match(recos, gts):
         else:
             fakes += 1
     return (len(gts), len(matched), len(recos), fakes), pairs
+
+
+# ---- IDEA community convention (A. De Vita's IDEA tracking validation; eval.py --convention idea)
+# One-to-one matching: a global Hungarian assignment that maximizes the shared hits over the
+# truth-reco pairs a criterion allows; a reco track left unassigned is a fake.
+#   dm         purity >= 0.5 AND completeness >= 0.5 (the >= makes ties possible; the
+#              assignment resolves them)
+#   purity75   purity >= 0.75, no completeness requirement ("IDEA purity")
+#   hungarian  any pair sharing a hit, no threshold
+# Truth: EVERY MC particle with a hit enters the matching and the inclusive efficiency and
+# fake rate (no pT, charge, hit-count, angle or status cut). The efficiency curves select
+# particles with >= 3 hits, 10 deg < theta < 170 deg and generator status 0 or 1, AFTER the
+# matching (a sub-threshold particle can still absorb a reco track).
+IDEA_CRITERIA = ("dm", "purity75", "hungarian")
+
+
+def overlap_table(reco_lab, truth_lab):
+    """per-hit reco and truth ids (-1 = none) -> (truth ids, truth hit counts, reco ids, reco hit
+    counts, shared hits [n_truth, n_reco]). Every id >= 0 counts: hit-count cuts belong to the
+    caller (reco: track_sets-style minimum before; truth: selection after the matching)."""
+    reco_lab, truth_lab = np.asarray(reco_lab), np.asarray(truth_lab)
+    tid, tcnt = np.unique(truth_lab[truth_lab >= 0], return_counts=True)
+    rid, rcnt = np.unique(reco_lab[reco_lab >= 0], return_counts=True)
+    ov = np.zeros((len(tid), len(rid)), np.int64)
+    both = (reco_lab >= 0) & (truth_lab >= 0)
+    if both.any():
+        np.add.at(ov, (np.searchsorted(tid, truth_lab[both]), np.searchsorted(rid, reco_lab[both])), 1)
+    return tid, tcnt, rid, rcnt, ov
+
+
+def one_to_one_match(tcnt, rcnt, ov, criterion):
+    """-> [(truth index, reco index)] of the one-to-one assignment (IDEA convention above)."""
+    from scipy.optimize import linear_sum_assignment
+    if ov.size == 0:
+        return []
+    comp = ov / np.maximum(tcnt[:, None], 1)
+    pur = ov / np.maximum(rcnt[None, :], 1)
+    ok = {"dm": (pur >= 0.5) & (comp >= 0.5), "purity75": pur >= 0.75,
+          "hungarian": np.ones_like(ov, bool)}[criterion] & (ov > 0)
+    rows, cols = linear_sum_assignment(-np.where(ok, ov, 0))
+    return [(int(i), int(j)) for i, j in zip(rows, cols) if ok[i, j]]
 
 
 def wrap(a):

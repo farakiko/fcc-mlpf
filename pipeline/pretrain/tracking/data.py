@@ -65,8 +65,11 @@ def featurize(c):
         [eta, np.sin(phi), np.cos(phi)], 1).astype(np.float32)
 
 
-def load_parquet(path, pt_cut=0.1, min_hits=3):
-    """-> list of event dicts (see module docstring)."""
+def load_parquet(path, pt_cut=0.1, min_hits=3, particles=False):
+    """-> list of event dicts (see module docstring). particles=True adds the unselected truth
+    the IDEA-convention evaluation needs: y_all[N] (every MC particle with a hit, -1 = none) and,
+    per y_all id, part_pt, part_theta [rad], part_rvtx [mm] (production radius), part_gen
+    (generator status)."""
     t = pq.read_table(path)
     md = {k.decode(): v.decode() for k, v in (t.schema.metadata or {}).items()}
     det = md.get("detector", "unknown")
@@ -76,7 +79,7 @@ def load_parquet(path, pt_cut=0.1, min_hits=3):
     # [T] reads ONLY its columns -- files may also carry calo/other stage groups (parquet is
     # columnar; unselected groups cost nothing).
     NEED = FEAT_COLS + ["thit_mc", "mc_px", "mc_py", "mc_pz", "mc_charge", "mc_vx", "mc_vy",
-                        "mc_vz"] + (["bhit_track"] if has_base else [])
+                        "mc_vz"] + (["bhit_track"] if has_base else []) + (["mc_genstatus"] if particles else [])
     cols = [c for c in NEED if c in t.column_names]
     events = []
     for i in range(t.num_rows):
@@ -99,6 +102,12 @@ def load_parquet(path, pt_cut=0.1, min_hits=3):
                   detector=det, dataset=dataset)
         if has_base:
             ev["base_y"] = c["bhit_track"].astype(np.int64)
+        if particles:
+            u, inv = np.unique(y_mc, return_inverse=True)
+            ev["y_all"] = np.where(y_mc >= 0, inv - (u[0] < 0), -1).astype(np.int64)
+            u = u[u >= 0]
+            ev.update(part_pt=allpt[u], part_theta=np.arctan2(allpt[u], c["mc_pz"][u]),
+                      part_rvtx=np.hypot(c["mc_vx"][u], c["mc_vy"][u]), part_gen=c["mc_genstatus"][u])
         events.append(ev)
     return events
 
