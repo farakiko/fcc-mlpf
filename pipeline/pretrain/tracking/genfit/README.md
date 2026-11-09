@@ -54,7 +54,10 @@ atomically). `summarize_samples.py` then collects the per-sample tables into one
 `plot_physics.py` makes the per-sample physics plots from the arrays `analyze_fitted.py` saves,
 one PDF per plot in `<outdir>/<sample>/`: fit failures, efficiency vs true pT and fake rate vs fitted pT, pT resolution, and both split
 into prompt and displaced (efficiency and resolution by true |d0|; fakes, which have no truth,
-by fitted |d0/σ(d0)| < 3 or > 3), every pT axis from 0.5 GeV.
+by fitted |d0/σ(d0)| < 3 or > 3), every pT axis from 0.5 GeV. Models trained with several
+random seeds are fitted as separate chains and drawn as one curve with `--group
+"NAME=CHAIN,CHAIN,..."`: the median over the seeds per bin, with a band from the 25th to the
+75th percentile over the seeds.
 
 ```bash
 export TORCH_PY=<python with torch>          # KEY4HEP_SETUP defaults to the pinned nightly
