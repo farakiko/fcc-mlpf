@@ -151,7 +151,7 @@ fake. The in-training monitor uses the same code.
 
 - **Finding level, no fit** — `eval.py` scores a checkpoint on held-out chunks, per
   sample (with an all-samples overview, `eval_samples.pdf`): efficiency versus true pT (inclusive, and split into prompt, true |d0| < 10 µm,
-  and displaced, > 25 µm), and the inclusive fake rate, with the classical baseline
+  and displaced, > 5 mm; `metrics.PROMPT_MAX` / `DISPLACED_MIN`), and the inclusive fake rate, with the classical baseline
   evaluated identically where the files carry one (CLD: conformal tracking). A fake has no
   truth particle, so a fake rate versus pT requires a fitted pT and belongs to the next
   level. Binned counts are saved to `eval_binned_<sample>.npz`; `overlay_evals.py` overlays
@@ -162,13 +162,16 @@ fake. The in-training monitor uses the same code.
   tracking validation (A. De Vita), so IDEA results can be read against IDEA studies. The
   matching is a global one-to-one (Hungarian) assignment maximizing the shared hits, under
   three criteria: double majority with ≥ 0.5 (`dm`), purity ≥ 0.75 with no completeness
-  requirement (`purity75`, "IDEA purity"), and no threshold (`hungarian`). The inclusive
-  efficiency and fake rate count every MC particle with a hit and every track; the efficiency
-  curves, versus true pT, polar angle and production radius, select particles with ≥3 hits,
-  10° < θ < 170° and generator status 0 or 1 after the matching (no pT cut). Hit efficiency
+  requirement (`purity75`, "IDEA purity"), and no threshold (`hungarian`). Every MC particle
+  with a hit enters the matching, and the fake rate counts every track left unassigned. The
+  efficiency counts particles with ≥ 3 hits (A. De Vita: the requirement belongs in the
+  denominator; without it, 77% of IDEA's particles have one or two hits and can never be
+  matched); the efficiency curves, versus true pT, polar angle and production radius, also
+  select 10° < θ < 170° and generator status 0 or 1. All cuts come after the matching (no pT
+  cut). Hit efficiency
   and hit purity of the matched pairs are reported as well. The implementation reproduces the
-  reference code's counts exactly (checked on 200 IDEA events, all three criteria, inclusive
-  and binned).
+  reference code's counts exactly (checked on 200 IDEA events, all three criteria, totals
+  and binned, before the ≥ 3-hit denominator was adopted).
 - **Fitted level, Genfit** — the chain in `genfit/` fits the candidates, and
   `genfit/analyze_fitted.py` reports the chain efficiency (found and fit converged), the
   fake rate versus Genfit pT, the fit-failure rate, resolutions, pulls and the

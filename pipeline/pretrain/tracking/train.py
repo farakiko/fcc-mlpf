@@ -289,12 +289,12 @@ def main():
         kmax = max(e["K"] for e in evs)
         dets = sorted(set(sample_of(e) for e in evs))
 
-    print(f"{n_train} train / {len(val_sub)} val-loss / {len(eval_sub)} eval events | "
-          f"samples {dets} | max K {kmax} (slots {args.slots}) | device {dev}", flush=True)
     if args.init:                                     # the architecture comes with the weights
         init = torch.load(args.init, map_location="cpu", weights_only=False)
         for k in ("dim", "slots", "attn", "block"):
             setattr(args, k, init["args"][k])
+    print(f"{n_train} train / {len(val_sub)} val-loss / {len(eval_sub)} eval events | "
+          f"samples {dets} | max K {kmax} (slots {args.slots}) | device {dev}", flush=True)
     assert args.slots > kmax, "need more slots than max tracks/event"
 
     model = TrackFormer(d=args.dim, slots=args.slots, attn=args.attn, block=args.block).to(dev)

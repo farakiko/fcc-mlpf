@@ -120,7 +120,7 @@ double majority. In addition:
   the hit content and the fit alone. *Absolute*: the ROC normalized to all true particles of
   a class, found or not — it folds in the finding and fit efficiency (the impact-parameter
   tagging view).
-- **classes** (`--classes`): `d0` = true |d0| > 25 µm vs < 10 µm; `origin` = tracks from
+- **classes** (`--classes`): `d0` = true |d0| > 5 mm vs < 10 µm (`metrics.DISPLACED_MIN` / `PROMPT_MAX`); `origin` = tracks from
   b/c/τ decays vs prompt tracks, by MC ancestry (`metrics.origin_class`: the nearest weakly
   decaying ancestor decides; simulator-created particles are V0-decay, decay-in-flight or
   material secondaries). The efficiency per origin class is tabulated in either mode.

@@ -196,7 +196,16 @@ Its "end-to-end" means hits to particles through the staged chain, not different
   per-detector val loss (`val_loss_det`) recorded per epoch; shard-cache keys are
   dataset-dir-prefixed (chunk basenames collide across datasets).
 
-- **"Displaced" definition under review (user question, 2026-10-15)**. The prompt (true |d0|
+- **Displaced = true |d0| > 5 mm (user decision 2026-11-09; was > 25 um)**, prompt stays
+  < 10 um; one definition in `metrics.PROMPT_MAX` / `DISPLACED_MIN`, used by eval.py,
+  overlay_evals.py (reads the thresholds stored in each npz; older files = 25 um),
+  analyze_fitted.py and plot_physics.py. The class is now long-lived strange decays,
+  conversions/material and decays in flight; heavy flavour sits mostly in the unclassified
+  10 um - 5 mm band (tt̄: 25% of particles above 0.5 GeV; Z->uds 7-8%) and is studied by truth
+  origin (`--classes origin`). Fitted level (plots/trk_fit/v7/physics_v2_d5mm/): ML finds about
+  twice the baseline's > 5 mm tracks in every pT bin (tt̄ 0.43-0.69 vs 0.15-0.38). The history
+  below is why the old cut was retired.
+- **"Displaced" definition review (user question, 2026-10-15; resolved 2026-11-09 above)**. The prompt (true |d0|
   < 10 um) / displaced (> 25 um) thresholds were set in the 10-13 session without a recorded
   derivation. Truth-origin study (scratch, /shared/scratch-genfit-test/v4/origin_d0.py; class =
   nearest weakly decaying ancestor, metrics.origin_class): CLD tt̄ 365 GeV has NO beam-spot
@@ -209,8 +218,7 @@ Its "end-to-end" means hits to particles through the staged chain, not different
   population that is 71% secondaries; it cannot be attributed to HF tracks without the
   per-origin efficiency split. analyze_fitted.py has `--classes origin` (HF vs prompt); eval.py still
   uses the d0 thresholds — switching it needs the IDEA canonical parquet to carry ancestry
-  (process_tree.py stores only particles with hits, so mc_parent chains break). Decision
-  pending with the user.
+  (process_tree.py stores only particles with hits, so mc_parent chains break).
 - **/shared/mlpf-t-mixed-code** = flat copy (no git) of pipeline/pretrain/tracking from
   2026-10-08 that the mlpf-t-mixed job ran from (mlpf/kube/train_job_tracking_mixed.yml).
   Its train.py/data.py/model.py are byte-identical to commit 4a1b2d9 (only eval.py differs:

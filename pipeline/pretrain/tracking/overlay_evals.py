@@ -23,6 +23,8 @@ import re
 
 import numpy as np
 
+from metrics import d0_text
+
 STYLE = [("tab:blue", "o-"), ("tab:green", "d-"), ("tab:purple", "^-"), ("tab:red", "v-")]
 BASE_STYLE = ("tab:orange", "s--")
 FS = 14
@@ -38,8 +40,14 @@ def fake(d, s):
     return float(d[f"n_fake_{s}"]) / max(float(d[f"n_rec_{s}"]), 1)
 
 
+def n_gt(d):
+    """every selected truth particle; npz from before 2026-11-10 only have the pT-binned ones"""
+    return float(d["n_gt"]) if "n_gt" in d else float(d["gt_tot"].sum())
+
+
 def eff(d, s):
-    return float(d[f"gt_{s}"].sum()) / max(float(d["gt_tot"].sum()), 1)
+    m = float(d[f"n_match_{s}"]) if "n_gt" in d else float(d[f"gt_{s}"].sum())
+    return m / max(n_gt(d), 1)
 
 
 def load_runs(specs):
@@ -64,8 +72,14 @@ def sample_page(plt, labels, runs, sample, with_base, pt_min):
         assert int(d["n_ev"]) == int(runs[0]["n_ev"]), f"{lab}: different number of {sample} events"
     base = next((d for d in runs if bool(d["has_base"])), None) if with_base else None
     fig, axes = plt.subplots(1, 3, figsize=(18, 4.8))
-    panels = [("", "inclusive"), ("_p", "prompt (true $|d_0| < 10\\,\\mu$m)"),
-              ("_d", "displaced (true $|d_0| > 25\\,\\mu$m)")]
+    # thresholds as stored by eval.py (files from before 2026-11-09: 10 um / 25 um)
+    cuts = lambda d: (float(d["prompt_max"]) if "prompt_max" in d else 0.010,
+                      float(d["displaced_min"]) if "displaced_min" in d else 0.025)
+    pmax, dmin = cuts(runs[0])
+    for lab, d in zip(labels, runs):
+        assert cuts(d) == (pmax, dmin), f"{lab}: different prompt/displaced thresholds"
+    panels = [("", "inclusive"), ("_p", f"prompt (true $|d_0| < {d0_text(pmax)})"),
+              ("_d", f"displaced (true $|d_0| > {d0_text(dmin)})")]
     for ax, (suf, title) in zip(axes, panels):
         ok = runs[0][f"gt_tot{suf}"] > 20
         for lab, d, (c, st) in zip(labels, runs, STYLE):
@@ -80,7 +94,7 @@ def sample_page(plt, labels, runs, sample, with_base, pt_min):
         ax.set_ylabel("DM efficiency", fontsize=FS); ax.set_ylim(0, 1.05)
         ax.legend(fontsize=FS - 4); ax.grid(alpha=0.3)
     fig.suptitle(f"[T] track finding, {sample} test set ({int(runs[0]['n_ev'])} events, "
-                 f"{int(runs[0]['gt_tot'].sum())} truth tracks)", fontsize=FS)
+                 f"{int(n_gt(runs[0]))} truth tracks)", fontsize=FS)
     fig.tight_layout()
     return fig
 
@@ -133,7 +147,7 @@ def main():
 
     w = max(len(l) for l in labels + ["baseline tracking"])
     for s, runs in per_sample.items():
-        print(f"[{s}] {int(runs[0]['n_ev'])} events, {int(runs[0]['gt_tot'].sum())} truth tracks")
+        print(f"[{s}] {int(runs[0]['n_ev'])} events, {int(n_gt(runs[0]))} truth tracks")
         for lab, d in zip(labels, runs):
             print(f"  {lab:{w}s}  eff {eff(d, 'm'):.4f}  fake {fake(d, 'm'):.4f}")
         base = next((d for d in runs if bool(d["has_base"])), None)

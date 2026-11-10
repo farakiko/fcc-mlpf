@@ -59,12 +59,11 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, ".."))
 import detectors
 import edm4hep_io as io
-from metrics import (ORIGINS, dm_match, iqr_sigma, origin_class, pt_from_omega, truth_perigee,
+from metrics import (DISPLACED_MIN, PROMPT_MAX, d0_text, ORIGINS, dm_match, iqr_sigma, origin_class, pt_from_omega, truth_perigee,
                      truth_selection, wrap)
 
 EFF_EDGES = np.array([0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100])   # = eval.py
 RES_EDGES = np.array([0.2, 0.5, 1, 2, 5, 10, 20, 100])
-PROMPT_MAX, DISPLACED_MIN = 0.010, 0.025                          # true |d0| [mm], = eval.py
 WIRE_ROLE = 6
 STYLE = [("tab:blue", "o-"), ("tab:green", "d-"), ("tab:purple", "^-"), ("tab:red", "v-")]
 BASE_STYLE = ("tab:orange", "s--")
@@ -286,7 +285,8 @@ def main():
     if args.classes == "d0":
         is_sig = lambda p: abs(p["y"][0]) > DISPLACED_MIN
         is_bkg = lambda p: abs(p["y"][0]) < PROMPT_MAX
-        sig_lab, bkg_lab = "displaced (true $|d_0| > 25\\,\\mu$m)", "prompt (true $|d_0| < 10\\,\\mu$m)"
+        sig_lab = f"displaced (true $|d_0| > {d0_text(DISPLACED_MIN)})"
+        bkg_lab = f"prompt (true $|d_0| < {d0_text(PROMPT_MAX)})"
     else:
         is_sig = lambda p: p["origin"] == "hf"
         is_bkg = lambda p: p["origin"] == "prompt"

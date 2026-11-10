@@ -181,7 +181,7 @@ def _build_one(p, shard_dir, pt_cut, min_hits):
     with open(mp, "w") as f:
         json.dump({"n": len(evs), "kmax": max((e["K"] for e in evs), default=0),
                    "detectors": sorted(set(e["detector"] for e in evs)),
-                   "datasets": [dataset]}, f)
+                   "datasets": [dataset], "pt_cut": pt_cut, "min_hits": min_hits}, f)
     print(f"  shard {key}: {len(evs)} events", flush=True)
 
 
@@ -203,6 +203,10 @@ def build_shards(parquets, shard_dir, pt_cut=0.1, min_hits=3, jobs=1):
         _build_one(p, shard_dir, pt_cut, min_hits)
         dataset, key, sp, mp = _shard_paths(p, shard_dir)
         m = json.load(open(mp))
+        # the labels are baked into the shard; shards from before this field have the defaults
+        if (m.get("pt_cut", 0.1), m.get("min_hits", 3)) != (pt_cut, min_hits):
+            raise SystemExit(f"{sp}: built with pt_cut {m.get('pt_cut', 0.1)}, min_hits "
+                             f"{m.get('min_hits', 3)}; requested {pt_cut}, {min_hits} (use another shard dir)")
         paths.append(sp)
         meta["n_events"] += m["n"]
         meta["kmax"] = max(meta["kmax"], m["kmax"])

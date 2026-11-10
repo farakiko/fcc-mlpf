@@ -11,9 +11,11 @@ monitor), eval.py (finding level) and genfit/analyze_fitted.py (fitted level).
                             charged particle (analytic helix from its MC production point,
                             transported to the PCA to the beamline), edm4hep conventions
   pt_from_omega          -- transverse momentum of a fitted track state
+  PROMPT_MAX /           -- the prompt / displaced classes by true |d0| (eval.py, analyze_fitted.py,
+  DISPLACED_MIN             genfit/plot_physics.py); d0_text writes a threshold for legends
   overlap_table /        -- the IDEA community convention (one-to-one Hungarian matching,
-  one_to_one_match          criteria dm / purity75 / hungarian, no truth cuts in the
-                            inclusive numbers), for eval.py --convention idea
+  one_to_one_match          criteria dm / purity75 / hungarian, all particles matched,
+                            efficiency over those with >= 3 hits), for eval.py --convention idea
 
 B is always an explicit argument (from the parquet metadata `B_tesla`, or the detector
 configuration in genfit/detectors.py) -- never a default.
@@ -21,6 +23,16 @@ configuration in genfit/detectors.py) -- never a default.
 import numpy as np
 
 C_LIGHT = 2.99792458e-4          # GeV / (T mm): pT = C_LIGHT * B * R
+# true |d0| [mm]. Displaced > 5 mm (user, 2026-11-09; was > 25 um): long-lived strange decays,
+# conversions and other material interactions, decays in flight. Heavy-flavour tracks (median
+# |d0| ~ 130 um) fall mostly in the unclassified band between the two; for them use the truth
+# origin (origin_class), not d0.
+PROMPT_MAX, DISPLACED_MIN = 0.010, 5.0
+
+
+def d0_text(mm):
+    """legend text (matplotlib mathtext) of a |d0| threshold in mm: um below 1 mm"""
+    return f"{mm * 1e3:g}\\,\\mu$m" if mm < 1 else f"{mm:g}\\,$mm"
 
 
 def truth_selection(hit_mc, mc_px, mc_py, mc_charge, pt_cut=0.1, min_hits=3):
@@ -62,10 +74,12 @@ def dm_match(recos, gts):
 #              assignment resolves them)
 #   purity75   purity >= 0.75, no completeness requirement ("IDEA purity")
 #   hungarian  any pair sharing a hit, no threshold
-# Truth: EVERY MC particle with a hit enters the matching and the inclusive efficiency and
-# fake rate (no pT, charge, hit-count, angle or status cut). The efficiency curves select
-# particles with >= 3 hits, 10 deg < theta < 170 deg and generator status 0 or 1, AFTER the
-# matching (a sub-threshold particle can still absorb a reco track).
+# Truth: EVERY MC particle with a hit enters the matching (no pT, charge, hit-count, angle or
+# status cut), so a track built on a sub-threshold particle is matched, not fake. The
+# efficiency counts only particles with >= 3 hits (A. De Vita, 2026-11-10: ">= 3 hits on the
+# denominator"; over every particle with a hit, 77% of IDEA's have 1-2 hits and can never be
+# matched); the efficiency curves also select 10 deg < theta < 170 deg and generator status
+# 0 or 1. All cuts are applied AFTER the matching.
 IDEA_CRITERIA = ("dm", "purity75", "hungarian")
 
 

@@ -8,7 +8,8 @@ analysis, genfit/analyze_fitted.py).
 Produces (into --outdir), one set PER SAMPLE (dataset directory, e.g. cld_91gev; shards
 built before 2026-10-15 carry only the detector name) present in the inputs:
   eval_tracking_<sample>.pdf  -- DM efficiency vs true pT (model + baseline); prompt
-                                 (true |d0| < 10 um) vs displaced (> 25 um) efficiency
+                                 (true |d0| < 10 um) vs displaced (> 5 mm) efficiency
+                                 (metrics.PROMPT_MAX / DISPLACED_MIN)
   eval_binned_<sample>.npz    -- binned counts for cross-run overlays (overlay_evals.py)
 and, for all samples together:
   eval_samples.pdf            -- (several samples) efficiency vs true pT per sample, and
@@ -20,10 +21,10 @@ in metrics.py) adds, per sample:
   eval_idea_{pt,theta,rvtx}_<sample>.pdf -- efficiency vs true pT, polar angle and production
                                  radius, one curve per matching criterion (dm, purity75,
                                  hungarian); curves: particles with >= 3 hits, 10 < theta < 170
-                                 deg, generator status 0/1; legend: inclusive efficiency and
-                                 fake rate (every particle with a hit, every reco track)
+                                 deg, generator status 0/1; legend: efficiency over every
+                                 particle with >= 3 hits, fake rate over every reco track
   eval_idea_<sample>.npz        -- the binned counts
-and the inclusive numbers per criterion (plus hit efficiency and hit purity) in summary.txt. It
+and these numbers per criterion (plus hit efficiency and hit purity) in summary.txt. It
 reads the parquets directly (the shards carry only the selected truth); --shard-cache is ignored.
 
 Usage:
@@ -43,12 +44,12 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import build_cache, build_shards, load_parquet, load_shard, sample_of
-from metrics import IDEA_CRITERIA, dm_match, one_to_one_match, overlap_table, track_sets
+from metrics import (DISPLACED_MIN, IDEA_CRITERIA, PROMPT_MAX, d0_text, dm_match, one_to_one_match,
+                     overlap_table, track_sets)
 from model import load_checkpoint
 
 EDGES = np.array([0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100])
 CTR = np.sqrt(EDGES[:-1] * EDGES[1:])
-PROMPT_MAX, DISPLACED_MIN = 0.010, 0.025          # true |d0| [mm]
 # IDEA convention: binning and curve selection of the IDEA tracking validation
 IDEA_BINS = {"pt": np.exp(np.arange(np.log(0.1), np.log(60.0), 0.2)),     # GeV, 0.2 in ln(pT)
              "theta": np.arange(10.0, 175.0, 5.0),                       # deg
@@ -62,12 +63,16 @@ def new_acc():
     nb = len(CTR)
     a = {k: np.zeros(nb) for k in ("gt_tot", "gt_m", "gt_b", "gt_tot_p", "gt_m_p", "gt_b_p",
                                    "gt_tot_d", "gt_m_d", "gt_b_d")}
-    a.update(n_rec_m=0, n_fake_m=0, n_rec_b=0, n_fake_b=0, n_ev=0, has_base=False)
+    # n_gt / n_match_*: every selected truth particle, also outside the pT bins (--pt-cut 0
+    # puts particles below EDGES[0] in the labels); the inclusive efficiency uses these
+    a.update(n_rec_m=0, n_fake_m=0, n_rec_b=0, n_fake_b=0, n_ev=0, has_base=False,
+             n_gt=0, n_match_m=0, n_match_b=0)
     return a
 
 
 def accumulate(a, ev, pred):
     gts = track_sets(ev["y"], 1)
+    a["n_gt"] += len(gts)
     td0 = ev.get("track_d0")                      # absent in shards built before 2026-10-13
     for t in gts:
         bi = np.searchsorted(EDGES, ev["track_pt"][t]) - 1
@@ -82,7 +87,7 @@ def accumulate(a, ev, pred):
             continue
         a["has_base"] |= s == "b"
         (_, _, nrec, nfake), pairs = dm_match(track_sets(np.asarray(finder, np.int64)), gts)
-        a[f"n_rec_{s}"] += nrec; a[f"n_fake_{s}"] += nfake
+        a[f"n_rec_{s}"] += nrec; a[f"n_fake_{s}"] += nfake; a[f"n_match_{s}"] += len(pairs)
         for _, t in pairs:
             bi = np.searchsorted(EDGES, ev["track_pt"][t]) - 1
             if not 0 <= bi < len(CTR):
@@ -114,12 +119,13 @@ def idea_bin(v, bins):
 
 def accumulate_idea(a, ev, pred):
     """IDEA convention (metrics.py): every particle with a hit and every reco track with >= 3
-    hits enter the matching and the inclusive numbers; the curves select afterwards."""
+    hits enter the matching (fake = unassigned track); the efficiency counts particles with
+    >= 3 hits (A. De Vita, 2026-11-10), the curves also select in theta and status."""
     reco = np.asarray(pred, np.int64).copy()
     ids, cnt = np.unique(reco[reco >= 0], return_counts=True)
     reco[np.isin(reco, ids[cnt < 3])] = -1
     tid, tcnt, rid, rcnt, ov = overlap_table(reco, ev["y_all"])
-    a["n_truth"] += len(tid); a["n_reco"] += len(rid); a["n_ev"] += 1
+    a["n_truth"] += int((tcnt >= IDEA_MIN_HITS).sum()); a["n_reco"] += len(rid); a["n_ev"] += 1
     th = np.degrees(ev["part_theta"][tid])
     sel = ((tcnt >= IDEA_MIN_HITS) & (th > IDEA_THETA[0]) & (th < IDEA_THETA[1])
            & np.isin(ev["part_gen"][tid], IDEA_GEN))
@@ -130,7 +136,8 @@ def accumulate_idea(a, ev, pred):
         np.add.at(a[f"tot_{o}"], bi[o][k], 1)
     for c in IDEA_CRITERIA:
         m = one_to_one_match(tcnt, rcnt, ov, c)
-        a[f"n_matched_{c}"] += len(m); a[f"n_fake_{c}"] += len(rid) - len(m)
+        a[f"n_matched_{c}"] += sum(int(tcnt[i] >= IDEA_MIN_HITS) for i, _ in m)
+        a[f"n_fake_{c}"] += len(rid) - len(m)
         a[f"shared_{c}"] += sum(int(ov[i, j]) for i, j in m)
         a[f"mtruth_{c}"] += sum(int(tcnt[i]) for i, _ in m)
         a[f"mreco_{c}"] += sum(int(rcnt[j]) for _, j in m)
@@ -141,7 +148,7 @@ def accumulate_idea(a, ev, pred):
 
 
 def summarize_idea(det, a):
-    lines = [f"[{det}] IDEA convention: {a['n_ev']} events, {a['n_truth']} particles with a hit, "
+    lines = [f"[{det}] IDEA convention: {a['n_ev']} events, {a['n_truth']} particles with >= {IDEA_MIN_HITS} hits, "
              f"{a['n_reco']} reco tracks (>= 3 hits); curve selection (>= {IDEA_MIN_HITS} hits, "
              f"{IDEA_THETA[0]:g} < theta < {IDEA_THETA[1]:g} deg, genStatus {IDEA_GEN}): "
              f"{int(a['tot_theta'].sum())} particles"]
@@ -172,7 +179,7 @@ def plot_idea(det, a, outdir):
         for (c, (col, mk)) in zip(IDEA_CRITERIA, (("tab:blue", "o"), ("tab:red", "D"), ("tab:green", "^"))):
             e = a[f"m_{o}_{c}"][ok] / n[ok]
             ax.errorbar(x[ok], e, yerr=np.sqrt(e * (1 - e) / n[ok]), fmt=mk, ms=5, color=col, capsize=2,
-                        label=f"{IDEA_LABELS[c]}\ninclusive eff {a[f'n_matched_{c}'] / max(a['n_truth'], 1):.3f}, "
+                        label=f"{IDEA_LABELS[c]}\neff {a[f'n_matched_{c}'] / max(a['n_truth'], 1):.3f}, "
                               f"fake {a[f'n_fake_{c}'] / max(a['n_reco'], 1):.3f}")
         if xl[o][1]:
             ax.set_xscale("log"); ax.xaxis.set_major_formatter(FormatStrFormatter("%g"))
@@ -184,10 +191,10 @@ def plot_idea(det, a, outdir):
 
 
 def summarize(det, a):
-    eff = lambda k: a[k].sum() / max(a["gt_tot"].sum(), 1)
-    lines = [f"[{det}] {a['n_ev']} events, {int(a['gt_tot'].sum())} truth tracks | "
-             f"model eff {eff('gt_m'):.4f} fake {a['n_fake_m'] / max(a['n_rec_m'], 1):.4f}"
-             + (f" | baseline eff {eff('gt_b'):.4f} fake {a['n_fake_b'] / max(a['n_rec_b'], 1):.4f}"
+    eff = lambda s: a[f"n_match_{s}"] / max(a["n_gt"], 1)
+    lines = [f"[{det}] {a['n_ev']} events, {a['n_gt']} truth tracks | "
+             f"model eff {eff('m'):.4f} fake {a['n_fake_m'] / max(a['n_rec_m'], 1):.4f}"
+             + (f" | baseline eff {eff('b'):.4f} fake {a['n_fake_b'] / max(a['n_rec_b'], 1):.4f}"
                 if a["has_base"] else "")]
     for j in range(len(CTR)):
         n = a["gt_tot"][j]
@@ -218,7 +225,8 @@ def plot(det, a, out_pdf):
         if a["has_base"]:
             axes[1].plot(CTR[okc], r("b"), "s" + ls, color="tab:orange",
                          label=f"baseline tracking, {lab}")
-    axes[1].set_ylabel("DM efficiency (prompt: true $|d_0|<10\\,\\mu$m; displaced: $>25\\,\\mu$m)",
+    axes[1].set_ylabel(f"DM efficiency (prompt: true $|d_0|<{d0_text(PROMPT_MAX)}; "
+                       f"displaced: $>{d0_text(DISPLACED_MIN)})",
                        fontsize=9)
     for ax in axes:
         ax.set_xscale("log"); ax.set_xlabel("true $p_T$ [GeV]"); ax.set_ylim(0, 1.05)
@@ -247,7 +255,7 @@ def plot_samples(acc, out_pdf):
     axes[0].set_ylabel("DM efficiency (dashed: baseline tracking)"); axes[0].grid(alpha=0.3)
     axes[0].legend(fontsize=9)
     xs = np.arange(len(names))
-    eff = lambda a, s: a[f"gt_{s}"].sum() / max(a["gt_tot"].sum(), 1)
+    eff = lambda a, s: a[f"n_match_{s}"] / max(a["n_gt"], 1)
     fake = lambda a, s: a[f"n_fake_{s}"] / max(a[f"n_rec_{s}"], 1)
     axes[1].plot(xs, [eff(acc[n], "m") for n in names], "o-", color="tab:blue", label="ML tracking, efficiency")
     axes[1].plot(xs, [fake(acc[n], "m") for n in names], "o:", color="tab:blue", label="ML tracking, fake rate")
@@ -270,6 +278,8 @@ def main():
     ap.add_argument("--shard-jobs", type=int, default=1, help="parallel shard builders")
     ap.add_argument("--max-events", type=int, default=0, help="0 = all")
     ap.add_argument("--thr", type=float, default=0.5)
+    ap.add_argument("--pt-cut", type=float, default=0.1,
+                    help="truth selection of our convention: charged, pT > this [GeV], >= 3 hits")
     ap.add_argument("--outdir", default=".")
     ap.add_argument("--convention", default="fcc-mlpf", choices=["fcc-mlpf", "idea"],
                     help="idea: also evaluate in the IDEA community convention (see above)")
@@ -285,11 +295,12 @@ def main():
     assert files, f"no inputs match {args.inputs}"
     idea = args.convention == "idea"
     if idea:                                   # one parquet at a time, with the full truth
-        shards = (load_parquet(f, particles=True) for f in files)
+        shards = (load_parquet(f, pt_cut=args.pt_cut, particles=True) for f in files)
     elif args.shard_cache:
-        shards = (load_shard(sp) for sp in build_shards(files, args.shard_cache, jobs=args.shard_jobs)[0])
+        shards = (load_shard(sp) for sp in build_shards(files, args.shard_cache, pt_cut=args.pt_cut,
+                                                         jobs=args.shard_jobs)[0])
     else:
-        shards = [build_cache(files, "")]
+        shards = [build_cache(files, "", pt_cut=args.pt_cut)]
 
     acc, acc_idea, n_ev = {}, {}, 0
     for sp in shards:
@@ -306,11 +317,12 @@ def main():
     lines = [f"eval: {n_ev} events, ckpt {args.ckpt}"]
     for det, a in sorted(acc.items()):
         lines += summarize(det, a)
-        np.savez(os.path.join(args.outdir, f"eval_binned_{det}.npz"), edges=EDGES, detector=det, **a)
+        np.savez(os.path.join(args.outdir, f"eval_binned_{det}.npz"), edges=EDGES, detector=det,
+                 prompt_max=PROMPT_MAX, displaced_min=DISPLACED_MIN, pt_cut=args.pt_cut, **a)
         plot(det, a, os.path.join(args.outdir, f"eval_tracking_{det}.pdf"))
     for det, a in sorted(acc_idea.items()):
         lines += summarize_idea(det, a)
-        np.savez(os.path.join(args.outdir, f"eval_idea_{det}.npz"), detector=det,
+        np.savez(os.path.join(args.outdir, f"eval_idea_{det}.npz"), detector=det, truth_min_hits=IDEA_MIN_HITS,
                  **{f"bins_{o}": b for o, b in IDEA_BINS.items()}, **a)
         plot_idea(det, a, args.outdir)
     txt = "\n".join(lines)

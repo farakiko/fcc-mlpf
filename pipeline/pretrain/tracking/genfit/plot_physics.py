@@ -13,7 +13,8 @@ entries are not drawn; file names start with the number):
      for found, converged particles produced at r < max_prod_r
   4. prompt vs displaced, efficiency (a, b) and fake rate (c, d). Efficiency: by the TRUE transverse
      impact parameter of the particle (prompt |d0| < --prompt-max, displaced > --displaced-min;
-     defaults 10 um / 25 um, as in eval.py; particles in between enter neither). Fake rate: a fake has no true d0, so converged tracks are split by their
+     defaults metrics.PROMPT_MAX / DISPLACED_MIN = 10 um / 5 mm, as in eval.py; particles in
+     between enter neither). Fake rate: a fake has no true d0, so converged tracks are split by their
      FITTED impact-parameter significance (prompt-like |d0/sigma(d0)| < 3, displaced-like > 3)
   5. prompt vs displaced pT resolution (a, b; true d0 classes of plot 4, common y range)
 Error bars: binomial for rates, sigma / sqrt(2 N) for resolutions; bins with fewer than
@@ -41,20 +42,19 @@ numbers (no powers of ten).
 """
 import argparse
 import os
+import sys
 
 import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from metrics import DISPLACED_MIN, PROMPT_MAX, d0_text
 
 STYLE = [("tab:blue", "o"), ("tab:green", "D"), ("tab:purple", "^"), ("tab:red", "v"),
          ("tab:orange", "s"), ("tab:brown", "P")]
 EDGES = np.array([0.5, 1, 2, 5, 10, 20, 50, 100])
 RES_EDGES = EDGES
-PROMPT_MAX, DISPLACED_MIN, SIG_CUT = 0.010, 0.025, 3.0       # defaults: true |d0| [mm]; fitted |d0/sigma|
+SIG_CUT = 3.0                                                # fitted |d0/sigma(d0)|
 PT = "$p_\\mathrm{T}$"
-
-
-def length(mm):
-    """legend text of a length given in mm: um below 1 mm"""
-    return f"{mm * 1e3:g}\\,\\mu$m" if mm < 1 else f"{mm:g}\\,$mm"
 
 
 def iqr_sigma(x):
@@ -181,8 +181,8 @@ def sample_figs(d, entries, outdir, nmin, pt_min, pt_max, exp, exp_text, process
             return 100 * s, 100 * e
         return f
 
-    cls = [("prompt", f"prompt (true $|d_0| < {length(prompt_max)})", lambda d0: np.abs(d0) < prompt_max),
-           ("displaced", f"displaced (true $|d_0| > {length(displaced_min)})", lambda d0: np.abs(d0) > displaced_min)]
+    cls = [("prompt", f"prompt (true $|d_0| < {d0_text(prompt_max)})", lambda d0: np.abs(d0) < prompt_max),
+           ("displaced", f"displaced (true $|d_0| > {d0_text(displaced_min)})", lambda d0: np.abs(d0) > displaced_min)]
     fcls = [("prompt", "prompt-like (fitted $|d_0/\\sigma(d_0)| < 3$)", lambda s: np.abs(s) < SIG_CUT),
             ("displaced", "displaced-like (fitted $|d_0/\\sigma(d_0)| > 3$)", lambda s: np.abs(s) >= SIG_CUT)]
     # 1. fit failures; legend: fraction among all candidates above pt_min (median over seeds)
