@@ -81,11 +81,16 @@ python validation/audit_edm4hep.py --detector cld <out path>/smoke.0.edm4hep.roo
 | sample | events | process | produced | location |
 |---|---:|---|---|---|
 | tt̄, 365 GeV | 89,260 | e⁺e⁻ → tt̄ (Z/γ*) | this chain, campaign 1 (2026-10-01) | `/eos/experiment/fcc/ee/simulation/key4hep_2026_04_08/365GeV/CLD_o2_v08/rec/ttbar_mlpf/` |
-| 40, 91, 160, 240, 365 GeV | 1,060,400 in total | e⁺e⁻ → Z → uū, dd̄, ss̄ | externally (2026-10), CLD_o2_v08 | `/eos/experiment/drdcalo/wg1/farouk_tracking_study/data/CLD_o2_v08/p8_ee_Zuds/<E>gev/` |
+| tt̄, 365 GeV (run 2) | 101,300 | e⁺e⁻ → tt̄ | B. Dudar (2026-10), CLD_o2_v08 | `/eos/experiment/drdcalo/wg1/farouk_tracking_study/data/CLD_o2_v08/p8_ee_tt_ecm365/run-2/` |
+| 40, 91, 160, 240, 365 GeV | 1,060,400 in total | e⁺e⁻ → Z → uū, dd̄, ss̄ | B. Dudar (2026-10), CLD_o2_v08 | `/eos/experiment/drdcalo/wg1/farouk_tracking_study/data/CLD_o2_v08/p8_ee_Zuds/<E>gev/` |
 
-The five samples at fixed collision energies were produced outside this repository; the
-generator card and the software stack were not recorded. Their content was measured
-instead (2026-10-26): the hard process is Z → uū, dd̄, ss̄ only, without the γ*
+The run-2 tt̄ sample and the five samples at fixed collision energies were produced by
+B. Dudar outside this repository; their generator cards, seeds and software stacks were not
+recorded. The run-2 sample shares no event with campaign 1, neither in the exact hit content
+nor at generator level, and its multiplicities agree with those of campaign 1 within 0.1%
+(checked 2026-10-28 on all events). The same directory holds a `run-1` tt̄ sample (495
+files), which we do not use. For the fixed-energy samples, the content was measured
+(2026-10-26): the hard process is Z → uū, dd̄, ss̄ only, without the γ*
 contribution (the fraction of u quarks is 0.28 at every energy, the Z couplings; with γ* it
 would rise towards 0.67 away from the pole), with no b or c quarks and no beam-spot
 smearing. The files keep the simulated tracker hits but not the simulated calorimeter hits;

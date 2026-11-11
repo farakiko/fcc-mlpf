@@ -20,3 +20,9 @@ duplication. Rules:
 | # | date | sample | jobs submitted / files delivered | events | seeds | output |
 |---|---|---|---|---|---|---|
 | 1 | 2026-10-01 | tt̄ @ 365 GeV, CLD_o2_v08, key4hep 2026-04-08 | 10,005 / 8,926 (≈1,080 jobs died, accepted) | 89,260 | **random**, list: `2026-10-01_ttbar365_100k.seeds.txt` (8,926 unique, verified no duplicates) | `/eos/experiment/fcc/ee/simulation/key4hep_2026_04_08/365GeV/CLD_o2_v08/rec/ttbar_mlpf/` (migrated from `/eos/user/f/fmokhtar/fcc-mlpf/data/cld_tt`) |
+
+Samples produced outside this chain are not in the ledger, since their seeds were not
+recorded: the run-2 tt̄ sample (101,300 events) and the five Z → uū, dd̄, ss̄ samples at fixed
+energies, all by B. Dudar (`../README.md`, "Samples"). Disjointness from them cannot be
+guaranteed through the seeds; it is checked on the data instead (run 2 against campaign 1:
+no shared event, 2026-10-28).
