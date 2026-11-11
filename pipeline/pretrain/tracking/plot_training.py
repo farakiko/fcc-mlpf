@@ -25,9 +25,10 @@ epoch's checkpoint ep_<NNN>.pt.
 import argparse
 import json
 import os
-import re
 
 import numpy as np
+
+from plotting import sample_key
 
 MIN_N = 20                     # minimum truth tracks for a plotted efficiency point
 
@@ -43,11 +44,6 @@ def _jsonl(path, key):
             r = json.loads(line)
             rows[key(r)] = r
     return [rows[k] for k in sorted(rows)]
-
-
-def _energy(name):
-    m = re.search(r"(\d+)gev", name)
-    return (int(m.group(1)) if m else 10**9, name)
 
 
 def _epoch_train_loss(rows, steps):
@@ -73,7 +69,7 @@ def plot_training(run, out_pdf):
     steps = _jsonl(os.path.join(run, "train_steps.jsonl"), lambda r: (r["ep"], r["nev"]))
     ep = np.array([r["ep"] for r in rows]) + 1          # epoch r["ep"] is complete at ep+1
     samples = sorted({d for r in rows for d in r.get("val_loss_det", {})} |
-                     {d for r in rows for d in r.get("dm", {})}, key=_energy)
+                     {d for r in rows for d in r.get("dm", {})}, key=sample_key)
     cols = dict(zip(samples, plt.cm.viridis(np.linspace(0, 0.9, max(len(samples), 1)))))
     title = os.path.basename(os.path.normpath(run))
 

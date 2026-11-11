@@ -132,7 +132,7 @@ def build_cache(parquets, cache, pt_cut=0.1, min_hits=3):
 # Shard format: <key>.ptz = zlib (level 1) of torch.save(list of compact events): labels as
 # int32 and no etaphi (recomputed from x, see etaphi_from_x). 4.7x smaller than plain
 # torch.save of the full events (CLD: ~41 B/hit; most features are zero for silicon hits),
-# ~2 ms to decompress a shard. Plain <key>.pt shards of earlier caches are still read.
+# ~2 ms to decompress a shard.
 def etaphi_from_x(x):
     """(eta, sin phi, cos phi) from the featurized hits (columns 6, 4, 5 of featurize)."""
     return np.stack([3.0 * x[:, 6], x[:, 4], x[:, 5]], 1).astype(np.float32)
@@ -159,9 +159,7 @@ def _shard_paths(p, shard_dir):
     # (cld_ttbar/chunk_00000.parquet vs idea_o1_zqq/chunk_00000.parquet)
     dataset = os.path.basename(os.path.dirname(os.path.abspath(p)))
     key = dataset + "_" + os.path.splitext(os.path.basename(p))[0]
-    old = os.path.join(shard_dir, key + ".pt")
-    sp = old if os.path.exists(old) else os.path.join(shard_dir, key + ".ptz")
-    return dataset, key, sp, os.path.join(shard_dir, key + ".json")
+    return dataset, key, os.path.join(shard_dir, key + ".ptz"), os.path.join(shard_dir, key + ".json")
 
 
 def _build_one(p, shard_dir, pt_cut, min_hits):
@@ -201,9 +199,11 @@ def build_shards(parquets, shard_dir, pt_cut=0.1, min_hits=3, jobs=1):
     paths, meta = [], {"n_events": 0, "kmax": 0, "detectors": set(), "datasets": set()}
     for p in parquets:
         _build_one(p, shard_dir, pt_cut, min_hits)
-        dataset, key, sp, mp = _shard_paths(p, shard_dir)
-        m = json.load(open(mp))
-        # the labels are baked into the shard; shards from before this field have the defaults
+        dataset, _, sp, mp = _shard_paths(p, shard_dir)
+        with open(mp) as f:
+            m = json.load(f)
+        # the labels are baked into the shard; caches built before 2026-11-09 lack these
+        # fields and were built with the defaults
         if (m.get("pt_cut", 0.1), m.get("min_hits", 3)) != (pt_cut, min_hits):
             raise SystemExit(f"{sp}: built with pt_cut {m.get('pt_cut', 0.1)}, min_hits "
                              f"{m.get('min_hits', 3)}; requested {pt_cut}, {min_hits} (use another shard dir)")
@@ -218,17 +218,14 @@ def build_shards(parquets, shard_dir, pt_cut=0.1, min_hits=3, jobs=1):
 
 
 def load_shard(path):
-    if path.endswith(".ptz"):
-        with open(path, "rb") as f:
-            evs = torch.load(io.BytesIO(zlib.decompress(f.read())), weights_only=False)
-        return [_expand(c) for c in evs]
-    return torch.load(path, weights_only=False)
+    with open(path, "rb") as f:
+        evs = torch.load(io.BytesIO(zlib.decompress(f.read())), weights_only=False)
+    return [_expand(c) for c in evs]
 
 
 def sample_of(ev):
-    """Monitoring/evaluation unit: the dataset (sample directory); shards built before
-    2026-10-15 carry only the detector."""
-    return ev.get("dataset") or ev["detector"]
+    """Monitoring and evaluation unit: the dataset (sample directory, e.g. cld_91gev)."""
+    return ev["dataset"]
 
 
 if __name__ == "__main__":

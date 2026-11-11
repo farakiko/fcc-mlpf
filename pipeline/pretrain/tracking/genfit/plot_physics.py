@@ -48,9 +48,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from metrics import DISPLACED_MIN, PROMPT_MAX, d0_text
-
-STYLE = [("tab:blue", "o"), ("tab:green", "D"), ("tab:purple", "^"), ("tab:red", "v"),
-         ("tab:orange", "s"), ("tab:brown", "P")]
+from plotting import style
 EDGES = np.array([0.5, 1, 2, 5, 10, 20, 50, 100])
 SIG_CUT = 3.0                                                # fitted |d0/sigma(d0)|
 PT = "$p_\\mathrm{T}$"
@@ -92,8 +90,8 @@ def draw(ax, edges, entries, curve, legend=lambda lab, js: lab):
     A single chain is drawn with its error bars, several (seeds) as the median with the 25-75% band."""
     x = np.sqrt(edges[:-1] * edges[1:])
     for i, (lab, js, *col) in enumerate(entries):
-        c, mk = STYLE[i % len(STYLE)]
-        c = (col and col[0]) or c
+        c, mk = style(i)
+        mk, c = mk[0], (col and col[0]) or c
         if len(js) == 1:
             y, e = curve(js[0])
             ax.errorbar(x, y, yerr=e, fmt=mk + "-", ms=7, color=c, capsize=3, label=legend(lab, js))

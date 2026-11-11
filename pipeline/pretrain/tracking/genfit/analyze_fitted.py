@@ -61,13 +61,12 @@ sys.path.insert(0, os.path.join(HERE, ".."))
 import detectors
 import edm4hep_io as io
 from metrics import (DISPLACED_MIN, PROMPT_MAX, d0_text, ORIGINS, dm_match, iqr_sigma, origin_class, pt_from_omega, truth_perigee,
-                     truth_selection, wrap)
+                     truth_selection)
+from plotting import BASE_STYLE, style
 
 EFF_EDGES = np.array([0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100])   # = eval.py
 RES_EDGES = np.array([0.2, 0.5, 1, 2, 5, 10, 20, 100])
 WIRE_ROLE = 6
-STYLE = [("tab:blue", "o-"), ("tab:green", "d-"), ("tab:purple", "^-"), ("tab:red", "v-")]
-BASE_STYLE = ("tab:orange", "s--")
 CAND_COLS = ["file", "event", "cand", "nhits", "nwire", "converged", "chi2", "ndf",
              "found", "purity", "owner_pt", "owner_eta", "owner_pdg", "owner_prod_r",
              "owner_d0", "fit_pt", "fit_theta", "owner_completeness"]
@@ -260,7 +259,7 @@ def main():
         acc[lab0] = new_acc()
         process(chains[0][1], cfg, base, base, B, acc[lab0])
     labels = list(acc)
-    style = {l: (BASE_STYLE if l == "baseline tracking" else STYLE[j % len(STYLE)])
+    style = {l: (BASE_STYLE if l == "baseline tracking" else style(j))
              for j, l in enumerate(labels)}
 
     # ---------------- tables ----------------

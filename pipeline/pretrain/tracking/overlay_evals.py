@@ -19,21 +19,12 @@ The baseline curve is taken from the first run that carries one.
 import argparse
 import glob
 import os
-import re
 
 import numpy as np
 
 from metrics import d0_text
-
-STYLE = [("tab:blue", "o-"), ("tab:green", "d-"), ("tab:purple", "^-"), ("tab:red", "v-")]
-BASE_STYLE = ("tab:orange", "s--")
+from plotting import BASE_STYLE, sample_key, style
 FS = 14
-
-
-def sample_key(name):
-    """Order samples by collision energy (number before 'gev'), others after."""
-    m = re.search(r"(\d+)gev", name)
-    return (int(m.group(1)) if m else 10**9, name)
 
 
 def fake(d, s):
@@ -83,7 +74,7 @@ def sample_page(plt, labels, runs, sample, with_base, pt_min):
     for ax, (suf, title) in zip(axes, panels):
         ok = runs[0][f"gt_tot{suf}"] > 20
         for j, (lab, d) in enumerate(zip(labels, runs)):
-            c, st = STYLE[j % len(STYLE)]
+            c, st = style(j)
             ax.plot(ctr[ok], (d[f"gt_m{suf}"] / np.maximum(d[f"gt_tot{suf}"], 1))[ok], st, color=c,
                     label=f"{lab} (fake {fake(d, 'm'):.3f})" if not suf else lab)
         if base is not None:
@@ -105,7 +96,7 @@ def summary_page(plt, labels, per_sample, with_base):
     x = np.arange(len(samples))
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
     for j, lab in enumerate(labels):
-        c, st = STYLE[j % len(STYLE)]
+        c, st = style(j)
         axes[0].plot(x, [eff(per_sample[s][j], "m") for s in samples], st, color=c, label=lab)
         axes[1].plot(x, [fake(per_sample[s][j], "m") for s in samples], st, color=c, label=lab)
     if with_base:

@@ -1,8 +1,9 @@
 """
-ML-tracking step 2 -- HEPTv2-style TrackFormer for CLD (single event = one point cloud).
+[T] model: TrackFormer, a HEPTv2-style (arXiv:2606.20437) transformer encoder and slot decoder
+over the tracker hits of one event, for any detector of the canonical schema.
 
 Encoder : transformer over hits with switchable attention
-            mode='full' : global attention (affordable at CLD occupancy, ~1k hits/event)
+            mode='full' : global attention (the default, also for IDEA's ~3.6k hits/event)
             mode='lsh'  : HEPTv2-style locality -- serialize hits by a random-projection
                           LSH hash in (eta, phi), attend within fixed-size blocks
                           (fresh random projections per layer = multiple views).
@@ -10,10 +11,8 @@ Decoder : M learnable track slots; L layers of [cross-attn slots<-hits, self-att
           FFN]; heads: slot-active logit + slot embedding E; assignment logits = E @ H^T.
 Aux     : per-hit background logit + normalized embedding z (InfoNCE), on encoder output.
 
-Ported from the development repo (mlpf/analysis/trk_model.py, 2026-10-01).
-Featurization lives in pipeline/data.py (canonical-schema, modality-aware).
+The input features are defined in data.py (featurize).
 """
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

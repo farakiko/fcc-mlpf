@@ -11,9 +11,12 @@ import argparse
 import os
 import re
 
+import sys
+
 import numpy as np
 
-STYLE = [("tab:blue", "o-"), ("tab:green", "d-"), ("tab:purple", "^-"), ("tab:red", "v-")]
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from plotting import sample_key, style
 PAT = re.compile(r"^\[(.+?)\] truth (\d+) \| finding eff ([\d.]+) \| chain eff ([\d.]+) \| fit failures "
                  r"([\d.]+) of (\d+) candidates \| fake rate \(converged\) ([\d.]+)")
 
@@ -21,11 +24,6 @@ ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDe
 ap.add_argument("--tables", nargs="+", required=True, help="fitted_<sample>.txt files")
 ap.add_argument("--out", required=True)
 a = ap.parse_args()
-
-
-def sample_key(name):
-    m = re.search(r"(\d+)gev", name)
-    return (int(m.group(1)) if m else 10**9, name)
 
 
 tables = {re.sub(r"^fitted_|\.txt$", "", os.path.basename(t)): t for t in a.tables}
@@ -58,7 +56,7 @@ x = np.arange(len(samples))
 fig, axes = plt.subplots(1, 3, figsize=(18, 4.8))
 val = lambda l, k, f=1: [f * res[s, l][k] if (s, l) in res else np.nan for s in samples]
 for j, l in enumerate(labels):
-    c, st = STYLE[j % len(STYLE)]
+    c, st = style(j)
     axes[0].plot(x, val(l, "chain"), st, color=c, label=l)
     axes[0].plot(x, val(l, "find"), ":", color=c, lw=1)
     axes[1].plot(x, val(l, "fail", 100), st, color=c, label=l)

@@ -5,8 +5,8 @@ efficiency is binned in TRUE pT, and the fake rate is inclusive (a fake has no t
 particle, so any pT axis for it must come from a fit -- that lives in the Genfit-level
 analysis, genfit/analyze_fitted.py).
 
-Produces (into --outdir), one set PER SAMPLE (dataset directory, e.g. cld_91gev; shards
-built before 2026-10-15 carry only the detector name) present in the inputs:
+Produces (into --outdir), one set PER SAMPLE (dataset directory, e.g. cld_91gev) present in
+the inputs:
   eval_tracking_<sample>.pdf  -- DM efficiency vs true pT (model + baseline); prompt
                                  (true |d0| < 10 um) vs displaced (> 5 mm) efficiency
                                  (metrics.PROMPT_MAX / DISPLACED_MIN)
@@ -36,7 +36,6 @@ Matching and selection: metrics.py (identical to the in-training monitor).
 import argparse
 import glob as globlib
 import os
-import re
 import sys
 
 import numpy as np
@@ -47,6 +46,7 @@ from data import build_cache, build_shards, load_parquet, load_shard, sample_of
 from metrics import (DISPLACED_MIN, IDEA_CRITERIA, PROMPT_MAX, d0_text, dm_match, one_to_one_match,
                      overlap_table, track_sets)
 from model import load_checkpoint
+from plotting import sample_key
 
 EDGES = np.array([0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100])
 CTR = np.sqrt(EDGES[:-1] * EDGES[1:])
@@ -73,15 +73,14 @@ def new_acc():
 def accumulate(a, ev, pred):
     gts = track_sets(ev["y"], 1)
     a["n_gt"] += len(gts)
-    td0 = ev.get("track_d0")                      # absent in shards built before 2026-10-13
+    td0 = ev["track_d0"]
     for t in gts:
         bi = np.searchsorted(EDGES, ev["track_pt"][t]) - 1
         if not 0 <= bi < len(CTR):
             continue
         a["gt_tot"][bi] += 1
-        if td0 is not None:
-            a["gt_tot_p"][bi] += abs(td0[t]) < PROMPT_MAX
-            a["gt_tot_d"][bi] += abs(td0[t]) > DISPLACED_MIN
+        a["gt_tot_p"][bi] += abs(td0[t]) < PROMPT_MAX
+        a["gt_tot_d"][bi] += abs(td0[t]) > DISPLACED_MIN
     for finder, s in ((pred, "m"), (ev.get("base_y"), "b")):
         if finder is None:
             continue
@@ -93,9 +92,8 @@ def accumulate(a, ev, pred):
             if not 0 <= bi < len(CTR):
                 continue
             a[f"gt_{s}"][bi] += 1
-            if td0 is not None:
-                a[f"gt_{s}_p"][bi] += abs(td0[t]) < PROMPT_MAX
-                a[f"gt_{s}_d"][bi] += abs(td0[t]) > DISPLACED_MIN
+            a[f"gt_{s}_p"][bi] += abs(td0[t]) < PROMPT_MAX
+            a[f"gt_{s}_d"][bi] += abs(td0[t]) > DISPLACED_MIN
     a["n_ev"] += 1
 
 
@@ -239,10 +237,7 @@ def plot_samples(acc, out_pdf):
     """All samples on one figure: efficiency vs true pT, and inclusive efficiency / fake rate."""
     import matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    def energy(n):                                  # order samples by collision energy
-        m = re.search(r"(\d+)gev", n)
-        return (int(m.group(1)) if m else 10**9, n)
-    names = sorted(acc, key=energy)
+    names = sorted(acc, key=sample_key)
     cols = plt.cm.viridis(np.linspace(0, 0.9, len(names)))
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
     for n, c in zip(names, cols):

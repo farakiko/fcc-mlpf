@@ -1,31 +1,31 @@
 """
-[T] training on canonical parquet(s) -- detector-blind, mixed-detector capable.
-Ported from the development repo (mlpf/analysis/trk_train.py, 2026-10-01); losses follow
-HEPTv2 (arXiv:2606.20437): Hungarian-matched focal+Dice+slot-BCE + hit-background BCE +
-InfoNCE. DM eval (purity>0.5 AND eff>0.5, >=3 hits) reported PER DETECTOR, plus the
-baseline finder's DM where the parquet carries one (CLD conformal tracking).
+[T] training on canonical parquet(s): detector-blind, any mix of detectors. Losses follow
+HEPTv2 (arXiv:2606.20437): Hungarian-matched focal and Dice terms on the hit masks, slot
+activity, per-hit background and InfoNCE on the hit embeddings. The in-training monitor reports
+the double-majority efficiency and fake rate per sample (metrics.py), and the baseline finder's
+where the files carry one (CLD conformal tracking). The defaults are the adopted recipe
+(200 slots, learning rate 1e-4 with cosine decay, 20 epochs).
 
-Stability check (no real training):
-  python train.py --inputs cld.parquet idea.parquet --check
-Small in-memory run:
-  python train.py --inputs ... --epochs 150 --outdir runs/t_mixed
-Large corpus (streaming shards; --inputs takes globs; split convention: the FIRST
---test-first files of the sorted list are held out -- matches the dataset's "first 10%"
-val convention; test tracks the val loss, no third split for now):
   python train.py --inputs '<derived>/cld_ttbar/chunk_*.parquet' --test-first 45 \
-      --shard-cache /fast/disk/shards_cld --epochs 20 \
-      --outdir runs/t_cld90k --mirror /eos/user/.../runs/t_cld90k
-Resume after an interruption: same command + --resume <outdir>/last.pt. last.pt is written
-at the end of every epoch and every --ckpt-minutes inside an epoch (with the shard order,
-position and random states, so training continues as if uninterrupted); all
-checkpoints are written atomically. Outputs per run: metrics.jsonl (per epoch: losses,
-per-sample DM efficiency/fake rate, efficiency counts in true-pT bins), train_steps.jsonl
-(running training loss), training_curves.pdf (plot_training.py), ep_<NNN>.pt (weights after
-every epoch, for eval.py at any epoch), best.pt, last.pt.
-Finetuning: --init <checkpoint> starts from that checkpoint's weights (and architecture) with a
-fresh optimizer and learning-rate schedule; everything else is a normal run:
-  python train.py --inputs <held-out chunks> <N training chunks> --test-first 5 \
-      --init runs/t_cld_all/ep_019.pt --epochs 20 --outdir runs/ft_idea_n<N>
+      --shard-cache DIR --outdir runs/t_cld --mirror <persistent dir>
+  python train.py --inputs '<derived>/cld_*/chunk_*.parquet' '<derived>/idea_o1_zqq/chunk_*.parquet' \
+      --test-frac 0.1 --shard-cache DIR --outdir runs/t_mixed
+  python train.py --inputs cld.parquet idea.parquet --check       # stability check, in memory
+
+Split: --test-first N holds out the first N files of the sorted list (one dataset);
+--test-frac F the first fraction of each --inputs glob separately (several datasets). Without
+--shard-cache all events are held in memory.
+Resume: the same command with --resume <outdir>/last.pt. last.pt is written at the end of every
+epoch and every --ckpt-minutes inside an epoch, with the shard order, the position and the
+random states, so training continues as if uninterrupted; all checkpoints are written
+atomically. Outputs per run: metrics.jsonl (per epoch: losses, per-sample efficiency and fake
+rate, efficiency counts in true-pT bins), train_steps.jsonl (running training loss),
+training_curves.pdf (plot_training.py), ep_<NNN>.pt (weights after every epoch), best.pt, last.pt.
+Fine-tuning: --init <checkpoint> starts from its weights and architecture with a new optimizer
+and schedule; --train-events N trains on the first N training events only (nested samples),
+and --repeat R passes R times over them per epoch:
+  python train.py --inputs <held-out chunks> <training chunks> --test-first 5 \
+      --init runs/t_cld_all/ep_019.pt --train-events 1000 --outdir runs/ft_n1000
 """
 import argparse
 import glob as globlib
@@ -183,10 +183,10 @@ def main():
     ap.add_argument("--min-hits", type=int, default=3)
     ap.add_argument("--attn", default="full", choices=["full", "lsh"])
     ap.add_argument("--dim", type=int, default=128)
-    ap.add_argument("--slots", type=int, default=160)
+    ap.add_argument("--slots", type=int, default=200)
     ap.add_argument("--block", type=int, default=128)
-    ap.add_argument("--epochs", type=int, default=100)
-    ap.add_argument("--lr", type=float, default=2.5e-4)
+    ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--val-frac", type=float, default=0.1,
                     help="random split fraction when --test-first is not used")
     ap.add_argument("--val-events", type=int, default=512,
@@ -332,17 +332,11 @@ def main():
             start_ep, resume = ck["ep"], ck
         else:
             start_ep = ck["ep"] + 1
-        if "sched" in ck:
-            sched.load_state_dict(ck["sched"])
-        else:                                         # checkpoints written before 2026-10-15
-            for _ in range(start_ep * n_train):
-                sched.step()
-        if "rng" in ck:                               # the data order continues exactly
-            rng.bit_generator.state = ck["rng"]
-        if "torch_rng" in ck:                         # and so do the torch random draws
-            torch.set_rng_state(ck["torch_rng"].cpu())
-            if dev.type == "cuda" and ck.get("cuda_rng"):
-                torch.cuda.set_rng_state_all([s.cpu() for s in ck["cuda_rng"]])
+        sched.load_state_dict(ck["sched"])
+        rng.bit_generator.state = ck["rng"]           # the data order continues exactly,
+        torch.set_rng_state(ck["torch_rng"].cpu())    # and so do the torch random draws
+        if dev.type == "cuda" and ck.get("cuda_rng"):
+            torch.cuda.set_rng_state_all([s.cpu() for s in ck["cuda_rng"]])
         print(f"resumed from {args.resume} at epoch {start_ep}"
               + (f", shard {resume['pos']}/{len(resume['order'])}" if resume else ""), flush=True)
 
