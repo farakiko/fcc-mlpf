@@ -18,8 +18,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import uproot
 
-AT_IP, AT_CALO = 1, 4
-DIAG = {"d0": 0, "phi": 2, "omega": 5, "z0": 9, "tanl": 14}
+from edm4hep_io import AT_IP, COV_DIAG
+
+DIAG = dict(zip(("d0", "phi", "omega", "z0", "tanl"), COV_DIAG))
+
+AT_CALO = 4                                     # edm4hep TrackState location AtCalorimeter
 
 
 def main():

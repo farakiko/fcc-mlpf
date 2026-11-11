@@ -22,7 +22,6 @@ import os
 
 DETECTORS = {
     "cld": dict(
-        name="CLD_o2_v08",
         # the vendored production geometry the samples were simulated with (differs from
         # the 2026-10-04 nightly k4geo copy only in the top-level version attribute)
         geometry="repo:production/cld/CLD_o2_v08/CLD_o2_v08.xml",
@@ -40,7 +39,6 @@ DETECTORS = {
         baseline_tracks="SiTracks_Refitted",        # conformal tracking + Kalman refit
     ),
     "idea": dict(
-        name="IDEA_o1_v4",
         # $K4GEO of the pinned nightly; the production stack (2026-09-10) is garbage-collected
         geometry="FCCee/IDEA/compact/IDEA_o1_v04/IDEA_o1_v04.xml",
         b_tesla=2.0,                                # DectDimensions: SolenoidField = 2*tesla

@@ -64,7 +64,7 @@ def main():
     for spec in args.labels:
         coll, path = spec.split("=", 1) if "=" in spec else ("MLTracks", spec)
         lab = np.load(path)
-        if "detector" in lab.files and str(lab["detector"]) != args.detector:
+        if str(lab["detector"]) != args.detector:
             sys.exit(f"{path} was produced for --detector {lab['detector']}")
         labels.append((coll, path, lab))
     assert len({c for c, _, _ in labels}) == len(labels), "duplicate collection names in --labels"
@@ -98,13 +98,12 @@ def main():
                         seen.add((oid.collectionID, oid.index))
                         try:
                             trk.addToTrackerHits(hit)
-                        except TypeError:
-                            trk.addToTrackerHits(edm4hep.TrackerHit(hit))
+                        except TypeError:             # a concrete hit type the binding does not
+                            trk.addToTrackerHits(edm4hep.TrackerHit(hit))   # convert implicitly
                     ntracks[coll] += 1
             frame.put(mltracks, coll)
         writer.write_frame(frame, "events")
-    if hasattr(writer, "finish"):
-        writer.finish()
+    writer.finish()
     print(f"wrote {args.output}: {len(nf)} events, " + ", ".join(f"{n} {c}" for c, n in ntracks.items()))
 
 

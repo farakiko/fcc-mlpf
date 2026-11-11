@@ -2,7 +2,10 @@ __pycache__/
 *.pyc
 *.root
 *.pt
+*.ptz
 logs/
+runs/
 .DS_Store
+.claude/settings.local.json
 testdata/
 plots/

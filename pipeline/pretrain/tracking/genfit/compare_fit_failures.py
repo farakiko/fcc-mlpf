@@ -13,14 +13,11 @@ Writes <dir>/fit_failures_compared_<tag>.txt.
 """
 import argparse
 import os
-import re
 
 import numpy as np
 import pyarrow.parquet as pq
 
-
-def slug(s):
-    return re.sub(r"[^A-Za-z0-9]+", "_", s).strip("_").lower()
+from analyze_fitted import slug
 
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

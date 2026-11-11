@@ -41,15 +41,16 @@ parser.add_argument("--detector", required=True, choices=sorted(detectors.DETECT
 parser.add_argument("--inputFile", required=True,
                     help="input file, or comma-separated list (one geometry init for all)")
 parser.add_argument("--outputFile", default="genfit_fitted.edm4hep.root")
-parser.add_argument("--inputTracks", default="SiTracks_Refitted",
-                    help="input TrackCollection to refit, or a comma-separated list")
+parser.add_argument("--inputTracks", required=True,
+                    help="input TrackCollection(s) to fit, comma-separated (e.g. MLTracks, or the "
+                         "baseline: detectors.py baseline_tracks)")
 parser.add_argument("--outputTracks", default="GenfitTracks",
                     help="fitted TrackCollection name, or a comma-separated list parallel to "
                          "--inputTracks (change it to refit a file that already carries "
                          "GenfitTracks, e.g. the baseline after an ML chain)")
 parser.add_argument("--nev", type=int, default=-1)
 parser.add_argument("--geometry", default="",
-                    help="compact XML (default: the detector's entry in detectors.py under $K4GEO)")
+                    help="compact XML (default: the detector's geometry entry in detectors.py)")
 args = parser.parse_known_args()[0]
 cfg = detectors.get(args.detector)
 
@@ -65,11 +66,11 @@ if len(ins) != len(outs):
 fitters = []
 for inp, out in zip(ins, outs):
     fitter = GenfitTrackFitter(
-        "GenfitTrackFitter" if len(ins) == 1 else f"GenfitTrackFitter_{out}",
+        f"GenfitTrackFitter_{out}",
         InputTracks=[inp],
         OutputFittedTracks=[out],
         OutputFittedTracksWithFilteredHits=[out + "FilteredHits"],
-        OutputFittedHits=["GenfitHits" if out == "GenfitTracks" else out + "Hits"],
+        OutputFittedHits=[out + "Hits"],
         OutputLevel=INFO,
     )
     fitter.UseBrems = False
@@ -81,7 +82,7 @@ for inp, out in zip(ins, outs):
     fitter.SkipTrackOrdering = False
     # NOTE: do NOT set ListOfTypesToSkip=[0] (as in the k4RecTracker reference steering): that
     # is a GGTF convention marking unmatched tracks with type=0 -- freshly created ML track
-    # collections carry the default type 0 and would ALL be skipped (learned the hard way).
+    # collections carry the default type 0 and would all be skipped.
     fitter.ListOfTypesToSkip = []
     fitter.FilterTrackHits = True
     if cfg["wire_tracker"]:

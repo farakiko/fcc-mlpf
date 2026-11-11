@@ -1,9 +1,10 @@
 """
 Input-feature distributions, CLD vs IDEA, as the MODEL sees them (post-scaling output of
-data.py::featurize). One PDF per feature (idx 0-24) + one role-occupancy chart (idx 25-33),
-publication style, into <repo>/plots/input_feat/ (or --out).
+data.py::featurize). One PDF per feature (index 0-24), one role-occupancy chart (the role
+one-hot), and the energy deposit with IDEA split into silicon and drift chamber, into --out.
 
-  python plot_features.py --cld <cld_chunk.parquet> --idea <idea_chunk.parquet>
+  python plot_features.py --cld <cld_chunk.parquet> --idea <idea_chunk.parquet> \
+      [--cld-label "CLD (tt, 365 GeV)"] [--idea-label "IDEA (Z->qq, 91 GeV)"] [--out DIR]
 """
 import argparse
 import os
@@ -12,7 +13,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from data import load_parquet
+from data import NFEAT, NROLE, load_parquet
 
 # index -> (short name for filename, x-axis label as fed to the model)
 FEAT = {
@@ -36,8 +37,11 @@ FEAT = {
     23: ("nclusters", r"$dN/dx$ clusters / 30 (wire)"),
     24: ("modality", "modality (0 = silicon, 1 = wire)"),
 }
-ROLES = ["vtx barrel", "vtx endcap", "inner trk b", "inner trk e",
+ROLES = ["vtx barrel", "vtx endcap", "inner trk b", "inner trk e",          # schema.ROLES
          "outer trk b", "outer trk e", "drift chamber", "Si wrap b", "Si wrap e"]
+ROLE0 = NFEAT - NROLE                          # first column of the role one-hot
+MODALITY = ROLE0 - 1
+assert len(FEAT) == ROLE0 and len(ROLES) == NROLE
 
 
 def main():
@@ -45,8 +49,9 @@ def main():
     ap.add_argument("--cld", required=True)
     ap.add_argument("--idea", required=True)
     ap.add_argument("--max-events", type=int, default=200)
-    ap.add_argument("--out", default=os.path.normpath(os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "plots", "input_feat")))
+    ap.add_argument("--cld-label", default=r"CLD  ($t\bar{t}$, 365 GeV)")
+    ap.add_argument("--idea-label", default=r"IDEA  ($Z\to q\bar{q}$, 91 GeV)")
+    ap.add_argument("--out", default="input_feat")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
@@ -62,7 +67,7 @@ def main():
     plt.rcParams.update({"font.size": 17, "axes.labelsize": 19, "legend.fontsize": 15,
                          "xtick.labelsize": 15, "ytick.labelsize": 15})
     C = {"CLD": "#1f77b4", "IDEA": "#d62728"}
-    LBL = {"CLD": r"CLD  ($t\bar{t}$, 365 GeV)", "IDEA": r"IDEA  ($Z\to q\bar{q}$, 91 GeV)"}
+    LBL = {"CLD": args.cld_label, "IDEA": args.idea_label}
 
     for i, (short, lab) in FEAT.items():
         v = {k: X[k][:, i] for k in X}
@@ -83,28 +88,28 @@ def main():
         fig.savefig(os.path.join(args.out, f"feat_{i:02d}_{short}.pdf"))
         plt.close(fig)
 
-    # role one-hot block (25-33): occupancy fractions per detector
+    # role one-hot block: occupancy fractions per detector
     fig, ax = plt.subplots(figsize=(9.5, 5.2))
     w = 0.38
-    xs = np.arange(9)
+    xs = np.arange(NROLE)
     for off, k in [(-w / 2, "CLD"), (w / 2, "IDEA")]:
-        frac = X[k][:, 25:34].mean(axis=0)
+        frac = X[k][:, ROLE0:].mean(axis=0)
         ax.bar(xs + off, frac, width=w, color=C[k], label=LBL[k])
     ax.set_xticks(xs)
-    ax.set_xticklabels([f"{j}: {ROLES[j]}" for j in range(9)], fontsize=13,
+    ax.set_xticklabels([f"{j}: {ROLES[j]}" for j in range(NROLE)], fontsize=13,
                        rotation=35, ha="right")
     ax.set_ylabel("fraction of hits")
     ax.set_yscale("log"); ax.set_ylim(1e-4, 1.5)
     ax.legend(frameon=False)
-    ax.set_xlabel("detector-global role id (25–33 one-hot)")
+    ax.set_xlabel(f"detector-global role id (one-hot, features {ROLE0}-{NFEAT - 1})")
     fig.tight_layout()
-    fig.savefig(os.path.join(args.out, "feat_25_33_roles.pdf"))
+    fig.savefig(os.path.join(args.out, f"feat_{ROLE0}_{NFEAT - 1}_roles.pdf"))
     plt.close(fig)
     # eDep with IDEA split by measurement type (silicon vs drift chamber, via modality)
     fig, ax = plt.subplots(figsize=(6.4, 5.0))
     e = {"CLD (silicon)": (X["CLD"][:, 7], C["CLD"], "-"),
-         "IDEA silicon (VTX+wrapper)": (X["IDEA"][X["IDEA"][:, 24] < 0.5, 7], "#d62728", "-"),
-         "IDEA drift chamber": (X["IDEA"][X["IDEA"][:, 24] > 0.5, 7], "#9467bd", "--")}
+         "IDEA silicon (VTX+wrapper)": (X["IDEA"][X["IDEA"][:, MODALITY] < 0.5, 7], "#d62728", "-"),
+         "IDEA drift chamber": (X["IDEA"][X["IDEA"][:, MODALITY] > 0.5, 7], "#9467bd", "--")}
     allv = np.concatenate([v for v, _, _ in e.values()])
     lo, hi = np.percentile(allv, [0.2, 99.8])
     bins = np.linspace(lo, hi, 80)

@@ -31,10 +31,6 @@ class EventFile:
         self._keys = set(self.t.keys())
         self._b = {}
 
-    def has(self, collection):
-        return f"{collection}/{collection}.trackerHits_begin" in self._keys or \
-               f"{collection}/{collection}.cellID" in self._keys
-
     def arr(self, key, i):
         if key not in self._b:
             self._b[key] = self.t[key].array()

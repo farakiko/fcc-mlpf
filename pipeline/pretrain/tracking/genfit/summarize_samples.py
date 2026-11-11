@@ -29,9 +29,9 @@ def sample_key(name):
 
 
 tables = {re.sub(r"^fitted_|\.txt$", "", os.path.basename(t)): t for t in a.tables}
-a.samples = sorted(tables, key=sample_key)
+samples = sorted(tables, key=sample_key)
 res, labels = {}, []
-for s in a.samples:
+for s in samples:
     for line in open(tables[s]):
         m = PAT.match(line.strip())
         if m:
@@ -43,8 +43,10 @@ for s in a.samples:
 
 w = max(len(l) for l in labels)
 print(f"{'sample':11s} {'chain':{w}s}  truth   finding  chain   fit-fail (of cand)   fake(conv)")
-for s in a.samples:
+for s in samples:
     for l in labels:
+        if (s, l) not in res:
+            continue
         r = res[s, l]
         print(f"{s:11s} {l:{w}s}  {r['truth']:6d}  {r['find']:.4f}  {r['chain']:.4f}  "
               f"{100*r['fail']:5.2f}% of {r['ncand']:6d}   {r['fake']:.4f}")
@@ -52,21 +54,23 @@ for s in a.samples:
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 FS = 13
-x = np.arange(len(a.samples))
+x = np.arange(len(samples))
 fig, axes = plt.subplots(1, 3, figsize=(18, 4.8))
-for l, (c, st) in zip(labels, STYLE):
-    axes[0].plot(x, [res[s, l]["chain"] for s in a.samples], st, color=c, label=l)
-    axes[0].plot(x, [res[s, l]["find"] for s in a.samples], ":", color=c, lw=1)
-    axes[1].plot(x, [100 * res[s, l]["fail"] for s in a.samples], st, color=c, label=l)
-    axes[2].plot(x, [res[s, l]["fake"] for s in a.samples], st, color=c, label=l)
+val = lambda l, k, f=1: [f * res[s, l][k] if (s, l) in res else np.nan for s in samples]
+for j, l in enumerate(labels):
+    c, st = STYLE[j % len(STYLE)]
+    axes[0].plot(x, val(l, "chain"), st, color=c, label=l)
+    axes[0].plot(x, val(l, "find"), ":", color=c, lw=1)
+    axes[1].plot(x, val(l, "fail", 100), st, color=c, label=l)
+    axes[2].plot(x, val(l, "fake"), st, color=c, label=l)
 axes[0].set_ylabel("chain efficiency (found + fit converged)\ndotted: finding only", fontsize=FS - 2)
 axes[1].set_ylabel("fit failures [% of candidates]", fontsize=FS)
 axes[2].set_ylabel("fake rate among converged tracks", fontsize=FS)
 for ax in axes:
-    ax.set_xticks(x); ax.set_xticklabels(a.samples, fontsize=FS - 3)
+    ax.set_xticks(x); ax.set_xticklabels(samples, fontsize=FS - 3)
     ax.grid(alpha=0.3); ax.legend(fontsize=FS - 4)
 axes[1].set_ylim(0, None); axes[2].set_ylim(0, None)
-fig.suptitle("[T] + Genfit per CLD test sample", fontsize=FS)
+fig.suptitle("[T] + Genfit per test sample", fontsize=FS)
 fig.tight_layout()
 fig.savefig(a.out)
 print(f"wrote {a.out}")

@@ -52,12 +52,13 @@ from metrics import DISPLACED_MIN, PROMPT_MAX, d0_text
 STYLE = [("tab:blue", "o"), ("tab:green", "D"), ("tab:purple", "^"), ("tab:red", "v"),
          ("tab:orange", "s"), ("tab:brown", "P")]
 EDGES = np.array([0.5, 1, 2, 5, 10, 20, 50, 100])
-RES_EDGES = EDGES
 SIG_CUT = 3.0                                                # fitted |d0/sigma(d0)|
 PT = "$p_\\mathrm{T}$"
 
 
-def iqr_sigma(x):
+def sigma68(x):
+    """half the 16-84% quantile width (Gaussian sigma-equivalent; analyze_fitted.py's tables use
+    metrics.iqr_sigma, the 25-75% width / 1.349, which weights the tails less)"""
     q = np.percentile(x, [16, 84])
     return 0.5 * (q[1] - q[0])
 
@@ -81,7 +82,7 @@ def resolution(rel, x, edges, nmin):
     for b in range(len(edges) - 1):
         v = rel[k == b]
         if len(v) >= nmin:
-            s[b] = iqr_sigma(v)
+            s[b] = sigma68(v)
             e[b] = s[b] / np.sqrt(2 * len(v))
     return s, e
 
@@ -158,7 +159,7 @@ def sample_figs(d, entries, outdir, nmin, pt_min, pt_max, exp, exp_text, process
     import mplhep as hep
     plt.style.use(hep.style.CMS)
     E = EDGES[(EDGES >= pt_min - 1e-9) & (EDGES <= pt_max + 1e-9)]
-    R = RES_EDGES[(RES_EDGES >= pt_min - 1e-9) & (RES_EDGES <= pt_max + 1e-9)]
+    R = EDGES[(EDGES >= pt_min - 1e-9) & (EDGES <= pt_max + 1e-9)]
     X = (E[0], E[-1])
     tag = str(d["tag"]); rmax = float(d["max_prod_r"])
     head = (exp, exp_text, process or tag)
