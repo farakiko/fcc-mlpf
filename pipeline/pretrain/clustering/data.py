@@ -6,7 +6,7 @@ schema columns and the file metadata. Same structure as ../tracking/data.py (sha
 Truth (HitPF, DESIGN.md §1-2): the object of a calorimeter or muon-system hit is the
 calorimeter mother of its largest-fraction MC particle, mc_calomother[chit_mc]; hits without a
 truth link are noise (y = -1). An object is a target if its hits hold more than MIN_DEP = 10 MeV
-(HitPF's threshold, legacy preprocessing utils.py); the hits of the others become noise.
+(HitPF's threshold, in its preprocessing); the hits of the others become noise.
 
 Each event -> dict(
   x[N,F], e[N]            hit features, hit energy [GeV]
@@ -60,7 +60,8 @@ def object_class(pdg, charge):
 def select_objects(ev, min_dep=MIN_DEP):
     """Drop objects with deposited energy <= min_dep (their hits -> noise) and renumber the
     rest. Idempotent; applied when building and when loading shards, so caches built before the
-    threshold stay valid."""
+    threshold (2026-11-03) stay valid. A cache built with a threshold cannot be relaxed: to lower
+    MIN_DEP, build a new cache."""
     keep = ev["obj_dep"] > min_dep
     if keep.all():
         return ev
@@ -153,8 +154,9 @@ def build_shards(parquets, shard_dir, jobs=1):
     paths, meta = [], {"n_events": 0, "kmax": 0, "nhit_max": 0, "detectors": set(), "datasets": set()}
     for p in parquets:
         _build_one(p, shard_dir)
-        dataset, key, sp, mp = _shard_paths(p, shard_dir)
-        m = json.load(open(mp))
+        _, _, sp, mp = _shard_paths(p, shard_dir)
+        with open(mp) as f:
+            m = json.load(f)
         paths.append(sp)
         meta["n_events"] += m["n"]
         meta["kmax"] = max(meta["kmax"], m["kmax"])

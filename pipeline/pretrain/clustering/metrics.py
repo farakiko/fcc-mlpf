@@ -1,7 +1,7 @@
 """
-Shared [C] evaluation definitions: ONE implementation, used by the in-training monitor
-(train.py), the evaluation and the baselines (Pandora, HitPF). Definitions follow HitPF
-(arXiv:2603.04084; development repo src/layers/inference_oc.py::match_showers):
+Shared [C] evaluation definitions, used by the in-training monitor (train.py) and, for the
+matching, by eval.py, whose inclusive numbers follow the same definitions. They follow HitPF
+(arXiv:2603.04084; its match_showers):
 
   iou_match   a reconstructed cluster and a truth object are paired by a one-to-one Hungarian
               assignment on the intersection-over-union of their hit sets (hit counts);
@@ -80,10 +80,10 @@ def summary(a):
             a["e_fake"] / max(a["e_clu"], 1e-12))
 
 
-# HitPF figures (development repo src/utils/inference/efficiency_calc_and_plots.py:
-# calculate_eff, calculate_fakes; classes = src/utils/pid_conversion.py::our_to_pandora_mapping).
+# HitPF figures (HitPF code of Garcia et al.: calculate_eff, calculate_fakes;
+# classes: our_to_pandora_mapping).
 # Bins are (lo, hi], points sit at the arithmetic bin centre, empty bins are skipped.
-HITPF_BINS = np.exp(np.arange(np.log(0.1), np.log(80), 0.2))       # [GeV]
+HITPF_BINS = np.exp(np.arange(np.log(0.1), np.log(80), 0.2))       # [GeV], 0.1 to 73.5
 HITPF_PDG = {                                                      # signed truth PDG per class
     "photon": [22], "electron": [11, -11], "muon": [13, -13],
     "charged_hadron": [211, -211, 2212, -2212, 321, -321, 3222, 3112, 3224, -3112, -3224],

@@ -16,11 +16,15 @@ Output (--outdir), per sample (dataset directory, e.g. cld_91gev), one PDF per p
   fake_energy_<sample>      fraction of the clustered energy in unmatched clusters vs cluster energy
   response_<class>_<sample> matched clusters: hit-energy sum / true energy vs true energy (median, 16-84%)
   summary.txt               inclusive efficiency per class, fake rate, fake energy, per clustering
-  eval_<sample>.npz         binned counts, for overlays; per truth object (o_e, o_pdg, o_cls, o_ecl =
+  eval_<sample>.npz         the binned counts of these plots; per truth object (o_e, o_pdg, o_ecl =
                             matched cluster energy or NaN) and per cluster (c_e, c_fake), for plot_hitpf.py
 
-  python eval.py --model "v0=runs/c_91gev/best.pt" --inputs '<derived_v0.3>/cld_91gev/chunk_000[0-9]*.parquet' \
-      --shard-cache DIR --max-events 2000 --outdir eval_c91 [--exp CLD --exp-text "Full Sim"]
+The inclusive numbers follow the definitions of metrics.py (the in-training monitor): objects
+and clusters of at least 0.1 GeV, energies above the last bin edge counted in the last bin.
+Each model runs in the precision it was trained in (fp32, or bf16 autocast if trained with --amp).
+
+  python eval.py --model "v0=runs/c_ttbar/best.pt" --inputs '<derived_v0.3>/cld_ttbar/chunk_000[0-4]*.parquet' \
+      --shard-cache DIR --max-events 2000 --outdir eval_c [--nn-floor] [--exp CLD --exp-text "Full Sim"]
 """
 import argparse
 import glob as globlib
@@ -59,7 +63,7 @@ def new_acc():
     nb, nc = len(E_EDGES) - 1, len(CLASSES)
     return dict(obj=np.zeros((nc, nb)), found=np.zeros((nc, nb)), clu=np.zeros(nb), fake=np.zeros(nb),
                 e_clu=np.zeros(nb), e_fake=np.zeros(nb), resp_cls=[], resp_e=[], resp=[], n_ev=0,
-                o_e=[], o_pdg=[], o_cls=[], o_ecl=[], c_e=[], c_fake=[])
+                o_e=[], o_pdg=[], o_ecl=[], c_e=[], c_fake=[])
 
 
 def accumulate(a, pred, ev):
@@ -75,17 +79,16 @@ def accumulate(a, pred, ev):
     ok = b >= 0
     np.add.at(a["obj"], (ev["obj_cls"][ok], b[ok]), 1)
     np.add.at(a["found"], (ev["obj_cls"][ok], b[ok]), matched[ok])
-    for c in cl:
-        bc = np.searchsorted(E_EDGES, ecl[c]) - 1
-        if 0 <= bc < len(E_EDGES) - 1:
+    for c in cl:                                                     # binned as the objects above
+        bc = min(np.searchsorted(E_EDGES, ecl[c]) - 1, len(E_EDGES) - 2)
+        if bc >= 0:
             a["clu"][bc] += 1; a["e_clu"][bc] += ecl[c]
             if c not in good:
                 a["fake"][bc] += 1; a["e_fake"][bc] += ecl[c]
     o_ecl = np.full(ev["K"], np.nan)                                 # per object / cluster, for plot_hitpf.py
     for c, o in pairs:
         o_ecl[o] = ecl[c]
-    a["o_e"] += list(ev["obj_e"]); a["o_pdg"] += list(ev["obj_pdg"]); a["o_cls"] += list(ev["obj_cls"])
-    a["o_ecl"] += list(o_ecl)
+    a["o_e"] += list(ev["obj_e"]); a["o_pdg"] += list(ev["obj_pdg"]); a["o_ecl"] += list(o_ecl)
     a["c_e"] += [ecl[c] for c in cl]; a["c_fake"] += [c not in good for c in cl]
     a["n_ev"] += 1
 
@@ -97,7 +100,6 @@ def main():
     ap.add_argument("--shard-cache", default="")
     ap.add_argument("--max-events", type=int, default=0, help="per sample; 0 = all")
     ap.add_argument("--act-thr", type=float, default=0.5)
-    ap.add_argument("--no-amp", action="store_true", help="run the models in fp32 (default: bf16 autocast on GPU)")
     ap.add_argument("--nn-floor", action="store_true", help="also evaluate the nearest-neighbour floor")
     ap.add_argument("--nn-link", type=float, default=20.0, help="NN floor: link distance [mm]")
     ap.add_argument("--nn-min-hits", type=int, default=10)
@@ -110,12 +112,11 @@ def main():
                        "mps" if torch.backends.mps.is_available() else "cpu")
     if hasattr(torch.backends.cuda, "enable_cudnn_sdp"):
         torch.backends.cuda.enable_cudnn_sdp(False)
-    models = [(s.split("=", 1)[0], load_checkpoint(s.split("=", 1)[1], dev)) for s in a.model]
-    amp = dev.type == "cuda" and not a.no_amp
+    models = [(s.split("=", 1)[0], *load_checkpoint(s.split("=", 1)[1], dev)) for s in a.model]
     files = sorted(sum([globlib.glob(p) for p in a.inputs], []))
     assert files, f"no inputs match {a.inputs}"
     sources = build_shards(files, a.shard_cache)[0] if a.shard_cache else files
-    names = [m for m, _ in models] + ["Pandora"] + (["NN floor"] if a.nn_floor else [])
+    names = [m for m, _, _ in models] + ["Pandora"] + (["NN floor"] if a.nn_floor else [])
     acc, nev = {}, {}
     for s in sources:
         for ev in (load_shard(s) if a.shard_cache else load_parquet(s)):
@@ -125,8 +126,9 @@ def main():
             nev[d] = nev.get(d, 0) + 1
             per = acc.setdefault(d, {n: new_acc() for n in names})
             x = torch.from_numpy(ev["x"]).to(dev)
-            for n, m in models:
-                accumulate(per[n], m.assign(x, etaphi_from_x(x), act_thr=a.act_thr, amp=amp), ev)
+            for n, m, amp in models:
+                accumulate(per[n], m.assign(x, etaphi_from_x(x), act_thr=a.act_thr,
+                                            amp=amp and dev.type == "cuda"), ev)
             accumulate(per["Pandora"], ev["pandora"], ev)
             if a.nn_floor:
                 accumulate(per["NN floor"], nn_clusters(ev["x"][:, :3] * 1000.0, a.nn_link, a.nn_min_hits), ev)

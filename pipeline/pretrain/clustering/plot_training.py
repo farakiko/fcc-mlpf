@@ -8,7 +8,7 @@ and train_steps.jsonl (running loss every --log-every events, held-out monitor e
   efficiency      monitor efficiency (active and all-slot readouts) vs epoch [+ reference lines]
   fake            monitor fake rate and fake-energy fraction vs epoch [+ reference lines]
 
-  python plot_training.py --run runs/c_probe_lr3fp --outdir curves [--label "fp32, lr 3e-5"] \\
+  python plot_training.py --run runs/c_ttbar --outdir curves [--label "fp32, lr 3e-5"] \\
       [--ref "Pandora=0.867,0.034" --ref "NN floor=0.782,0.080"]
 
 A resumed run repeats the step records between its last checkpoint and the interruption; the
@@ -46,6 +46,8 @@ def main():
     for e in epochs:                                                 # end-of-epoch monitor
         mon[e["ep"] + 1.0] = {r: {d: dict(eff=m["eff"], fake=m["fake"], fake_e=m["fake_e"])
                                   for d, m in per.items()} for r, per in e["monitor"].items()}
+    if not mon:
+        raise SystemExit(f"{a.run}: no monitor records yet (first epoch not finished; see --monitor-every)")
     sample = a.sample or next(iter(next(iter(mon.values()))["active"]))
     refs = [(n, *map(float, v.split(","))) for n, v in (r.split("=", 1) for r in a.ref)]
 

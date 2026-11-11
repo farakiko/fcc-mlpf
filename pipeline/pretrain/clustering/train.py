@@ -1,9 +1,10 @@
 """
 [C] training on canonical parquet(s) with the calorimeter group -- detector-blind, the [T]
-recipe (../tracking/train.py) with four calorimeter-specific changes (DESIGN.md §4, §6):
+recipe (../tracking/train.py) with these calorimeter-specific changes (DESIGN.md):
   - Dice term weighted by hit energy (in the Hungarian cost and in the loss); the focal term
     stays unweighted, so that low-energy hits remain supervised
-  - bf16 autocast for the transformer (output heads and losses in fp32): full attention over ~10k hits per event
+  - learning rate 3e-5 with a linear warmup over 2,000 events, then cosine, in fp32: at 1e-4,
+    or in bf16 autocast, the tt-bar training degrades (DESIGN.md, studies of 2026-10-30)
   - in-training monitor with the HitPF matching (metrics.py): efficiency per class, fake rate
     and fake-energy fraction, per sample, on a fixed held-out subsample, for two readouts:
     "active" (hits to their argmax slot among slots with activity > 0.5; the reconstruction)
@@ -11,10 +12,11 @@ recipe (../tracking/train.py) with four calorimeter-specific changes (DESIGN.md 
   - slot activity weighted --w-act (default 1) in the loss AND the Hungarian cost, as the
     class term of DETR. With [T]'s 0.1 the activity head stays at the prior and the readout
     keeps a few random slots (2026-10-28 study: readout 0.02 vs 0.95 for the masks)
+  - readout without a per-hit threshold: every hit joins its best active slot (model.assign)
 
-  python train.py --inputs '<derived_v0.3>/cld_91gev/chunk_*.parquet' --test-frac 0.1 \
-      --shard-cache /shared/fcc-mlpf-shards/c_91gev --epochs 20 --outdir runs/c_91gev \
-      [--mirror <persistent dir>] [--resume runs/c_91gev/last.pt] [--check]
+  python train.py --inputs '<derived_v0.3>/cld_ttbar/chunk_*.parquet' --slots 320 \
+      --shard-cache DIR --outdir runs/c_ttbar [--mirror <persistent dir>] \
+      [--resume runs/c_ttbar/last.pt] [--check]
 
 Split: the FIRST --test-frac of each --inputs glob is held out (the [T] convention, so [C] and
 [T] hold out the same events). Outputs: metrics.jsonl (per epoch), train_steps.jsonl (running
@@ -165,13 +167,15 @@ def main():
     ap.add_argument("--slots", type=int, default=256)
     ap.add_argument("--block", type=int, default=128)
     ap.add_argument("--epochs", type=int, default=20)
-    ap.add_argument("--lr", type=float, default=1e-4)
-    ap.add_argument("--warmup", type=int, default=0,
+    ap.add_argument("--lr", type=float, default=3e-5)
+    ap.add_argument("--warmup", type=int, default=2000,
                     help="linear learning-rate warmup over this many events (steps), then cosine")
     ap.add_argument("--w-act", type=float, default=1.0,
                     help="slot-activity weight in the loss and the Hungarian cost")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--no-amp", action="store_true", help="train in fp32 (default: bf16 autocast on GPU)")
+    ap.add_argument("--amp", action="store_true",
+                    help="bf16 autocast for the transformer on GPU (default fp32: bf16 training "
+                         "breaks at epoch 6 on tt-bar, DESIGN.md)")
     ap.add_argument("--val-events", type=int, default=500)
     ap.add_argument("--eval-events", type=int, default=500)
     ap.add_argument("--max-train-files", type=int, default=0, help="0 = all (smoke tests)")
@@ -195,8 +199,12 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
     dev = torch.device("cuda" if torch.cuda.is_available() else
                        "mps" if torch.backends.mps.is_available() else "cpu")
-    amp = dev.type == "cuda" and not args.no_amp
-    rng = np.random.default_rng(args.seed)
+    amp = dev.type == "cuda" and args.amp
+    # as [T]: the held-out monitor subsets are drawn with seed 0 for every run, so runs that
+    # differ only in --seed are monitored on the same events; the run seed sets the
+    # initialization and the data order (seed 0 keeps one stream for both)
+    mrng = np.random.default_rng(0)
+    rng = mrng if args.seed == 0 else np.random.default_rng(args.seed)
     torch.manual_seed(args.seed)
 
     groups = [sorted(globlib.glob(p)) for p in args.inputs]
@@ -218,12 +226,12 @@ def main():
     tst = []
     for ds in sorted(by_ds):
         got = []
-        for sp in [by_ds[ds][i] for i in rng.permutation(len(by_ds[ds]))]:
+        for sp in [by_ds[ds][i] for i in mrng.permutation(len(by_ds[ds]))]:
             got += load_shard(sp)
             if len(got) >= quota:
                 break
         tst += got[:quota]
-    ridx = rng.permutation(len(tst))
+    ridx = mrng.permutation(len(tst))
     val_sub = [tst[i] for i in ridx[:args.val_events]]
     eval_sub = [tst[i] for i in ridx[:args.eval_events]]
     del tst

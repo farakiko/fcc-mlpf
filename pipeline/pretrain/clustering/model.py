@@ -7,9 +7,10 @@ Decoder : M learnable slots; L layers of [cross-attn slots<-hits, self-attn slot
           heads: slot-active logit + slot embedding E; assignment logits = E @ H^T
 Aux     : per-hit noise logit + normalized embedding z (InfoNCE), on the encoder output.
 
-Identical to the [T] model except that the input width is a constructor argument. It is a
-copy, not an import, so that the two stages can evolve independently while [T] runs; the
-skeleton moves to a shared module once both are stable.
+The encoder and decoder are a copy of the [T] model with the input width as a constructor
+argument; [C] differs in the output heads (fp32 under autocast) and in the readout (assign).
+It is a copy, not an import, so that the two stages can evolve independently while both are
+under development; the skeleton moves to a shared module once both are stable.
 """
 import numpy as np
 import torch
@@ -94,16 +95,16 @@ class HEPTv2(nn.Module):
             return act, A, F.normalize(H, dim=1), self.h_bg(H).squeeze(1)
 
     @torch.no_grad()
-    def assign(self, x, etaphi, act_thr=0.5, hit_thr=0.0, amp=False):
+    def assign(self, x, etaphi, act_thr=0.5, amp=False):
         """Per-hit slot id (-1 = unassigned): a hit joins its highest-probability slot among the
-        active slots (sigmoid(activity) > act_thr), if that probability exceeds hit_thr. Default
-        hit_thr = 0: every hit is assigned (CLD calorimeter hits carry no noise; the [T] rule,
-        hit_thr = 0.5, leaves contested hits out). act_thr = 0 reads out all slots."""
+        active slots (sigmoid(activity) > act_thr). There is no per-hit threshold: CLD
+        calorimeter hits carry no noise, and the [T] rule (probability > 0.5) leaves contested
+        hits out (DESIGN.md, study of 2026-10-28). act_thr = 0 reads out all slots."""
         with torch.autocast(x.device.type, dtype=torch.bfloat16, enabled=amp):
             act, A, _, _ = self(x, etaphi)
         P = torch.sigmoid(A.float())
         P[torch.sigmoid(act.float()) <= act_thr] = -1.0
-        return np.where((P.max(0).values > hit_thr).cpu().numpy(), P.argmax(0).cpu().numpy(), -1)
+        return np.where((P.max(0).values > 0).cpu().numpy(), P.argmax(0).cpu().numpy(), -1)
 
 
 def etaphi_from_x(x):
@@ -112,16 +113,11 @@ def etaphi_from_x(x):
 
 
 def load_checkpoint(path, dev):
-    """best.pt / last.pt / ep_NNN.pt -> HEPTv2 in eval mode (architecture from the saved args)."""
+    """best.pt / last.pt / ep_NNN.pt -> (HEPTv2 in eval mode, trained in bf16 autocast?). The
+    architecture and the precision come from the saved args; checkpoints written before the
+    --amp flag (2026-11-11) carry no_amp instead."""
     ck = torch.load(path, map_location=dev, weights_only=False)
     a = ck["args"]
-    nfeat = a.get("nfeat")
-    if nfeat is None:        # checkpoints before 2026-10-29: this directory's data.NFEAT, by path
-        import importlib.util, os                            # (a bare "import data" could pick [T]'s)
-        spec = importlib.util.spec_from_file_location(
-            "c_data", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data.py"))
-        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-        nfeat = mod.NFEAT
-    model = HEPTv2(nfeat, d=a["dim"], slots=a["slots"], attn=a["attn"], block=a["block"]).to(dev)
+    model = HEPTv2(a["nfeat"], d=a["dim"], slots=a["slots"], attn=a["attn"], block=a["block"]).to(dev)
     model.load_state_dict(ck["state_dict"]); model.eval()
-    return model
+    return model, a["amp"] if "amp" in a else not a["no_amp"]

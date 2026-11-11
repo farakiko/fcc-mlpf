@@ -1,16 +1,16 @@
 """
-[C] figures with HitPF's definitions (arXiv:2603.04084; development repo
+[C] figures with HitPF's definitions (arXiv:2603.04084; HitPF code of Garcia et al.:
 src/evaluation/plots/efficiency.py and src/utils/inference/efficiency_calc_and_plots.py), from
 the per-object and per-cluster records that eval.py writes (eval_<sample>.npz). The matching is
-the one of metrics.py (= HitPF's match_showers); the bins (ln-spaced by 0.2 from 0.1 to 80 GeV),
-uncertainties, truth-PDG classes (metrics.HITPF_PDG) and plot style are HitPF's.
+the one of metrics.py (= HitPF's match_showers); the bins (ln-spaced by 0.2 from 0.1 GeV, last
+edge 73.5 GeV, as in HitPF's code), uncertainties, truth-PDG classes (metrics.HITPF_PDG) and plot style are HitPF's.
 
 One PDF per plot, in --outdir, per sample:
   hitpf_eff_<class>_<sample>   clustering efficiency vs true energy (HitPF's "clustering
                                efficiency": matched, without PID), per truth class
   hitpf_fake_<sample>          fake rate vs cluster energy
   hitpf_fake_energy_<sample>   fraction of the energy in unmatched clusters vs cluster energy
-  hitpf_summary.txt            the same quantities integrated over 0.1-80 GeV
+  hitpf_summary.txt            the same quantities integrated over 0.1-73.5 GeV
 
 Deviation from HitPF, forced by the stage: HitPF counts fakes per PREDICTED class and bins them in
 calibrated energy (its PF output carries a PID and an energy regression; for Pandora the PFO's
@@ -77,8 +77,8 @@ def main():
             hep.label.exp_label(exp=a.exp, text=a.exp_text, data=True, loc=0, rlabel="", ax=ax)
         fig.tight_layout(); fig.savefig(os.path.join(a.outdir, f"{name}.pdf")); plt.close(fig)
 
-    lines = [f"HitPF definitions: objects and clusters in (0.1, 80] GeV; fakes inclusive, in cluster "
-             f"hit-energy sum (see plot_hitpf.py)"]
+    lines = [f"HitPF definitions: objects and clusters in ({HITPF_BINS[0]:.1f}, {HITPF_BINS[-1]:.1f}] GeV; "
+             "fakes inclusive, in cluster hit-energy sum (see plot_hitpf.py)"]
     files = sorted(globlib.glob(os.path.join(a.eval_dir, "eval_*.npz")))
     assert files, f"no eval_*.npz in {a.eval_dir}"
     for path in files:
