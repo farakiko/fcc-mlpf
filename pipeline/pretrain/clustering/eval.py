@@ -3,10 +3,10 @@
 with the HitPF definitions of metrics.py (IoU of hit sets >= 0.25, one-to-one Hungarian).
 No track enters anywhere.
 
-Clusterings compared (any number of models + two baselines):
+Clusterings compared (any number of models + Pandora; the NN floor with --nn-floor):
   model       HEPTv2 readout (hits -> argmax over active slots), one per --model
   Pandora     PandoraClusters from the REC files (uses tracks: more information than [C])
-  NN floor    parameter-free nearest-neighbour clustering: hits closer than --nn-link mm are
+  NN floor    (--nn-floor) parameter-free nearest-neighbour clustering: hits closer than --nn-link mm are
               connected, connected components with fewer than --nn-min-hits hits are dropped;
               the floor any learned clustering has to clear
 
@@ -98,6 +98,7 @@ def main():
     ap.add_argument("--max-events", type=int, default=0, help="per sample; 0 = all")
     ap.add_argument("--act-thr", type=float, default=0.5)
     ap.add_argument("--no-amp", action="store_true", help="run the models in fp32 (default: bf16 autocast on GPU)")
+    ap.add_argument("--nn-floor", action="store_true", help="also evaluate the nearest-neighbour floor")
     ap.add_argument("--nn-link", type=float, default=20.0, help="NN floor: link distance [mm]")
     ap.add_argument("--nn-min-hits", type=int, default=10)
     ap.add_argument("--outdir", default="eval_c")
@@ -114,7 +115,7 @@ def main():
     files = sorted(sum([globlib.glob(p) for p in a.inputs], []))
     assert files, f"no inputs match {a.inputs}"
     sources = build_shards(files, a.shard_cache)[0] if a.shard_cache else files
-    names = [m for m, _ in models] + ["Pandora", "NN floor"]
+    names = [m for m, _ in models] + ["Pandora"] + (["NN floor"] if a.nn_floor else [])
     acc, nev = {}, {}
     for s in sources:
         for ev in (load_shard(s) if a.shard_cache else load_parquet(s)):
@@ -127,18 +128,22 @@ def main():
             for n, m in models:
                 accumulate(per[n], m.assign(x, etaphi_from_x(x), act_thr=a.act_thr, amp=amp), ev)
             accumulate(per["Pandora"], ev["pandora"], ev)
-            accumulate(per["NN floor"], nn_clusters(ev["x"][:, :3] * 1000.0, a.nn_link, a.nn_min_hits), ev)
+            if a.nn_floor:
+                accumulate(per["NN floor"], nn_clusters(ev["x"][:, :3] * 1000.0, a.nn_link, a.nn_min_hits), ev)
 
     import matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import mplhep as hep
-    from matplotlib.ticker import FormatStrFormatter
+    from matplotlib.ticker import FormatStrFormatter, NullFormatter
     plt.style.use(hep.style.CMS)
     ctr = np.sqrt(E_EDGES[:-1] * E_EDGES[1:])
     sty = {n: (BASE_STYLE[n] if n in BASE_STYLE else STYLE[i % len(STYLE)]) for i, n in enumerate(names)}
 
     def save(fig, ax, name, rlabel, title, ylim=(0, 1.05), xlabel="true energy [GeV]"):
         ax.set_xscale("log"); ax.xaxis.set_major_formatter(FormatStrFormatter("%g"))
+        lo, hi = ax.get_xlim()                                   # 1-2-5 labels only (minor labels overlap)
+        ax.set_xticks([t for t in (0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100) if lo <= t <= hi])
+        ax.xaxis.set_minor_formatter(NullFormatter())
         ax.set_xlabel(xlabel); ax.set_ylim(*ylim); ax.grid(alpha=0.3, which="both")
         ax.legend(title=title, fontsize="small", title_fontsize="small", alignment="left")
         if a.exp or a.exp_text:

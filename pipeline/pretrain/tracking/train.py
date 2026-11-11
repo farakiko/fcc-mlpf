@@ -194,6 +194,13 @@ def main():
     ap.add_argument("--eval-events", type=int, default=1024,
                     help="test events for the periodic DM eval (full eval -> eval.py)")
     ap.add_argument("--eval-every", type=int, default=1)
+    ap.add_argument("--train-events", type=int, default=0,
+                    help="train on the FIRST N training events in file order only (nested small "
+                         "sets for finetuning scans; kept resident)")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="an epoch passes R times over the (resident) training events: a small "
+                         "set then pays the per-epoch val loss / eval / checkpoint cost per "
+                         "R*N events, like a larger one")
     ap.add_argument("--outdir", default="runs/t_dev")
     ap.add_argument("--mirror", default="",
                     help="copy metrics/curves/checkpoints here after every epoch "
@@ -289,6 +296,18 @@ def main():
         kmax = max(e["K"] for e in evs)
         dets = sorted(set(sample_of(e) for e in evs))
 
+    if args.train_events:                             # first N events in file order (nested)
+        evs = []
+        for sp in trn_shards:
+            evs += sp if isinstance(sp, list) else load_shard(sp)
+            if len(evs) >= args.train_events:
+                break
+        assert len(evs) >= args.train_events, f"only {len(evs)} training events"
+        trn_shards, n_train = [evs[:args.train_events]], args.train_events
+    if args.repeat > 1:
+        assert all(isinstance(s, list) for s in trn_shards), "--repeat needs resident training events"
+        trn_shards = [sum(trn_shards, []) * args.repeat]
+        n_train = len(trn_shards[0])
     if args.init:                                     # the architecture comes with the weights
         init = torch.load(args.init, map_location="cpu", weights_only=False)
         for k in ("dim", "slots", "attn", "block"):
@@ -345,7 +364,7 @@ def main():
         t0 = t_ck = time.time(); win = []
         for j in range(pos0, len(order)):
             sj = order[j]
-            shard = trn_shards[sj] if not args.shard_cache else load_shard(trn_shards[sj])
+            shard = trn_shards[sj] if isinstance(trn_shards[sj], list) else load_shard(trn_shards[sj])
             for i in rng.permutation(len(shard)):
                 loss = event_loss(model, shard[i], dev)
                 if args.check:

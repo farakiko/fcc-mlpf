@@ -80,8 +80,8 @@ python eval.py --model "v0=runs/c_91gev/best.pt" [--model "...=..."] \
     --max-events 2000 --outdir eval_c91 --exp CLD --exp-text "Full Sim"
 ```
 
-`eval.py` compares any number of checkpoints with Pandora and the nearest-neighbour floor
-(`--nn-link` mm, `--nn-min-hits`) on held-out chunks, per sample, with the matching of
+`eval.py` compares any number of checkpoints with Pandora, and with `--nn-floor` the
+nearest-neighbour floor (`--nn-link` mm, `--nn-min-hits`), on held-out chunks, per sample, with the matching of
 `metrics.py`. One PDF per plot: efficiency vs true energy per class, fake rate and fake-energy
 fraction vs cluster energy, and the energy response (hit-energy sum over true energy) of
 matched clusters per class; `summary.txt` holds the inclusive numbers and `eval_<sample>.npz`
