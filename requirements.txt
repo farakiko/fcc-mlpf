@@ -1,13 +1,13 @@
 # fcc-mlpf python dependencies (python >= 3.10).
-# Training/evaluation ([T] pipeline):
+# Training and evaluation of the models (pipeline/):
 torch
 numpy
 scipy
 pyarrow
 matplotlib
 mplhep
-# EDM4hep ROOT reading (postprocessing adapters, validation audit, genfit chain step A/D):
+# EDM4hep ROOT reading (postprocessing adapters, validation audit, Genfit chain steps A, D, E):
 uproot
 awkward
-# NOT covered here: the Genfit fitting step (k4run) and sample production run inside a
-# key4hep environment (see the respective READMEs); nothing else is required.
+# Not covered here: sample production, the IDEA conversion and the Genfit fit (k4run) run in a
+# Key4hep environment from cvmfs (see the respective READMEs).

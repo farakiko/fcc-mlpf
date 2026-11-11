@@ -1,23 +1,26 @@
-# finetune — the user access point (interface stub)
+# finetune — adapting the models to a new detector (planned)
 
-**Who this is for:** you have a detector design (a CLD variant, IDEA, ALLEGRO, something
-new) and want ML reconstruction on it — without touching how the stages are pretrained.
+This directory is reserved for the single entry point through which a user with a new
+detector (a CLD variant, ALLEGRO, or another concept) adapts the pretrained models with a
+small sample of that detector, without touching how the stages are pretrained. It will be
+implemented once pretrained models exist for all three stages.
 
-**What it will look like** (interface frozen now, implementation lands once pretrained
-checkpoints exist for all three stages):
+Until then, each stage is fine-tuned through its own training script. For [T]:
 
 ```bash
-# 1. produce + audit + convert your sample (see production/, validation/, postprocessing/)
-# 2. adapt the pretrained backbone, climbing only as far as your data budget requires:
-python finetune.py --inputs your_detector.parquet --backbone <released-ckpt> \
-    --mode zero-shot | heads | full
-# 3. get the standard report: tracking DM eff/fake, clustering energy-purity, PF jet/MET
-#    resolutions — each vs adaptation cost (events, GPU-hours)
+python pipeline/pretrain/tracking/train.py --inputs <held-out chunks> <training chunks> --test-first 5 \
+    --init <pretrained checkpoint> --train-events N --outdir runs/ft_n<N>
 ```
 
-The ladder: **zero-shot** (set conditioning: B-field, geometry scalars) → **heads-only**
-(freeze backbones, tune slot decoders/heads) → **full** (everything unfrozen, low LR, stage
-aux losses kept on). The performance-vs-budget curve this produces is the headline
-measurement of the whole project.
+`--init` starts from the weights and the architecture of a pretrained checkpoint, with a new
+optimizer and learning-rate schedule; `--train-events N` restricts the training to the first N
+events, so that runs with increasing N use nested samples. The efficiency on the new detector
+as a function of N, starting from the pretrained model or from scratch, is the fine-tuning
+curve of the project (`docs/results.md`).
 
-Until this lands, developers can train per-stage directly: see `../pretrain/`.
+The intended workflow for a new detector is: produce and audit a sample
+([`production/`](../../production/README.md), [`validation/`](../../validation/README.md)),
+convert it ([`postprocessing/`](../../postprocessing/README.md)), fine-tune each stage, and
+evaluate with the standard reports of each stage (track-finding efficiency and fake rate,
+clustering efficiency and fake rate, particle-flow resolutions), each as a function of the
+number of events used.
