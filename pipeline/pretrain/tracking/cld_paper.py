@@ -183,13 +183,13 @@ def plot(args):
     MATCH_TXT = "double majority" if dm else "track purity $\\geq$ 75%"
     labels = dict(s.split("=", 1) for s in args.label)
     STY = [("tab:blue", "o"), ("tab:red", "D"), ("tab:green", "^"), ("tab:purple", "v")]
-    PROC = {"uds365": "$Z \\to q\\bar{q}$ ($q$ = u,d,s), $\\sqrt{s}$ = 365 GeV",
-            "uds91": "$Z \\to q\\bar{q}$ ($q$ = u,d,s), $\\sqrt{s}$ = 91 GeV",
-            "ttbar": "$t\\bar{t}$, $\\sqrt{s}$ = 365 GeV (paper: $b\\bar{b}$)"}
+    PROC = {"uds365": "$Z \\to q\\bar{q}$ ($q$ = u,d,s), $m_Z$ = 365 GeV",
+            "uds91": "$Z \\to q\\bar{q}$ ($q$ = u,d,s), $m_Z$ = 91 GeV",
+            "ttbar": "$t\\bar{t}$, $\\sqrt{s}$ = 365 GeV"}
     PTE = 10 ** np.arange(-1, np.log10(200) + 1e-9, 1 / 25)          # 25 bins per decade
     LOG_LAB = {0.1: "$10^{-1}$", 1: "1", 10: "10", 100: "$10^{2}$"}
 
-    def fig_eff(sample, name, x, edges, sel_txt, cuts, xlabel, ylim, logx=False, xlim=None):
+    def fig_eff(sample, name, x, edges, sel_txt, cuts, xlabel, ylim, logx=False, xlim=None, loc=None):
         d = data[sample]; finders = list(d["finders"])
         r = d["reconstructable"] & cuts(d)
         fig, ax = plt.subplots(figsize=(10, 8.5))
@@ -209,7 +209,7 @@ def plot(args):
         ax.set_xlim(*(xlim or (edges[0], edges[-1]))); ax.set_ylim(*ylim)
         ax.grid(True, which="major", ls=":", color="k", lw=0.8)
         ax.set_xlabel(xlabel); ax.set_ylabel("Tracking efficiency")
-        ax.legend(title=PROC[sample] + "\n" + sel_txt, loc="lower left", fontsize="x-small",
+        ax.legend(title=PROC[sample] + "\n" + sel_txt, loc=loc or ("lower right" if dm and logx else "lower left"), fontsize="x-small",
                   title_fontsize="x-small", alignment="left", frameon=False)
         hep.label.exp_label(exp="CLD", text="Full Sim", data=True, loc=0, rlabel=MATCH_TXT, ax=ax)
         fig.tight_layout(); fig.savefig(os.path.join(args.outdir, f"{name}.pdf")); plt.close(fig)
@@ -220,19 +220,30 @@ def plot(args):
     iso = lambda d: d["dmc"] > 0.02
     R50 = lambda d: d["rprod"] < 50
     pt1 = lambda d: d["pt"] > 1
+    disp = lambda d: d["rprod"] > 50                                 # the vertex cut flipped
     fold = lambda d: np.minimum(th(d), 180 - th(d))
+    PTE_D = 10 ** np.arange(-1, np.log10(200) + 1e-9, 1 / 10)        # coarser: fewer particles
     for s in data:
         stag = {"uds365": "", "uds91": "_91", "ttbar": "_ttbar"}[s]
         if s in ("uds365", "uds91", "ttbar"):
             fig_eff(s, f"eff_vs_pt{stag}", lambda d: d["pt"], PTE,
                     "$10^\\circ < \\theta < 170^\\circ$, vertex R < 50 mm, $\\Delta_{MC}$ > 0.02 rad",
-                    lambda d: thc(d) & R50(d) & iso(d), "$p_\\mathrm{T}$ [GeV]", (0.7, 1.05), logx=True,
+                    lambda d: thc(d) & R50(d) & iso(d), "$p_\\mathrm{T}$ [GeV]", (0.2 if dm else 0.7, 1.05), logx=True,
                     xlim=(0.093, 200 if s != "uds91" else 50))
         if s in ("uds365", "ttbar"):
             fig_eff(s, f"eff_vs_theta{stag}", fold, np.arange(8, 92, 2),
                     "$p_\\mathrm{T}$ > 1 GeV, vertex R < 50 mm, $\\Delta_{MC}$ > 0.02 rad",
                     lambda d: pt1(d) & R50(d) & iso(d), "$\\theta$ [$^\\circ$] (folded at 90$^\\circ$)",
                     (0.9 if s == "uds365" else 0.7, 1.01), xlim=(0, 90))
+        # displaced: the same figures with the vertex cut flipped (production radius > 50 mm)
+        fig_eff(s, f"eff_vs_pt{stag}_displaced", lambda d: d["pt"], PTE_D,
+                "$10^\\circ < \\theta < 170^\\circ$, vertex R > 50 mm, $\\Delta_{MC}$ > 0.02 rad",
+                lambda d: thc(d) & disp(d) & iso(d), "$p_\\mathrm{T}$ [GeV]", (0, 1.05), logx=True,
+                xlim=(0.093, 200 if s != "uds91" else 50), loc="lower right")
+        fig_eff(s, f"eff_vs_theta{stag}_displaced", fold, np.arange(8, 92, 4),
+                "$p_\\mathrm{T}$ > 1 GeV, vertex R > 50 mm, $\\Delta_{MC}$ > 0.02 rad",
+                lambda d: pt1(d) & disp(d) & iso(d), "$\\theta$ [$^\\circ$] (folded at 90$^\\circ$)",
+                (0, 1.05), xlim=(0, 90))
         if s == "uds365":
             fig_eff(s, "eff_vs_dmc", lambda d: d["dmc"], np.arange(0, 0.461, 0.01),
                     "$p_\\mathrm{T}$ > 1 GeV, $10^\\circ < \\theta < 170^\\circ$, vertex R < 50 mm",
