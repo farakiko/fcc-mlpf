@@ -5,8 +5,8 @@ baseline with BASE_STYLE, and samples are ordered by collision energy (sample_ke
 """
 import re
 
-COLORS = ("tab:blue", "tab:green", "tab:purple", "tab:red", "tab:brown", "tab:pink")
-MARKERS = ("o", "d", "^", "v", "P", "X")
+COLORS = ("tab:blue", "tab:red", "tab:green", "tab:purple", "tab:brown", "tab:pink")
+MARKERS = ("o", "D", "^", "v", "P", "X")
 BASE_STYLE = ("tab:orange", "s--")              # baseline tracking: colour, marker + dashed line
 
 

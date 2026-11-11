@@ -127,6 +127,41 @@ the IDEA particles have one or two hits and could never be matched, which is why
 denominator requires three. The implementation reproduces the reference code's counts exactly
 on 200 IDEA events.
 
+### Matching definitions: why the ranking flips (2026-11-11)
+
+`eval.py` reproduces the CLD paper's track-finding figures (arXiv:1911.12230, Figs. 45-51) for
+the conformal tracking: 0.98 efficiency on prompt primary tt̄ particles with the paper's 75%
+purity matching. With double majority it drops to 0.86, while the ML finders (with the slot
+acceptance on hit evidence) stay at 0.95-0.96; with the 75% rule they lie 2-3 points below
+the conformal tracking. Classifying every particle (2,000 tt̄ events; common denominator:
+generator status 1, pT > 0.1 GeV, ≥ 4 hits, 10° < θ < 170°, ΔMC > 0.02, production radius
+< 50 mm) explains the flip. The conformal tracking gives 11.1% of the particles one clean
+track that holds only about 41% of their hits and 40% of their layers (47% of the particles
+at 0.1-0.2 GeV, 2-4% above 1 GeV); the remaining hits belong to no track, the final refit
+drops none, and the split-track merging is off in the CLD configuration. The 75% rule counts
+these particles as found, double majority does not. The ML finders contaminate instead: 1.5%
+of the particles get a track holding most of their hits but with 25-50% foreign hits, which
+double majority counts and the 75% rule does not. After the Genfit fit (tt̄), both failure
+modes are costly: the conformal partial tracks have a pT resolution of 6% at 0.63-2 GeV and
+31-44% above 2 GeV (0.4-0.5% for complete tracks), and the ML contaminated tracks fail the fit
+in 41-46% of cases, with 13-30% resolution and a negative bias. Requiring both a purity of
+at least 75% and a completeness above 50% (`--match pure75complete`) counts neither: prompt
+tt̄ efficiency 0.858 (conformal), 0.938 (v2), 0.947 (CLD inclusive + IDEA).
+
+### Why ML candidates fail the fit (2026-11-11)
+
+Of the clean ML candidates (purity ≥ 75%, completeness > 50%; tt̄, CLD inclusive + IDEA)
+7.8% fail the Genfit fit, against 0.1% of the conformal tracks; a failed fit has no
+parameters and is lost after the fit (the finding-level efficiencies are not affected; the
+fitted fake rate sees only converged tracks). Identical hit sets in both collections converge
+or fail together (13,208 of 13,211 converge in both), so the fitter treats the two inputs
+alike and the hit content decides. 88% of the failures are candidates that follow the
+particle beyond its turning point: both legs of a curling particle (a layer holding two of
+its hits more than 20 mm apart; 6.6% of the clean candidates, 76% of them fail) or one leg
+continuing past the maximum radius (8.3%, 22% fail). Candidates that stop before the turning
+point fail in 1.0% of cases. The conformal tracks almost never continue past the turning
+point (0.1%), which is the other face of their incompleteness.
+
 ## Track fitting with Genfit
 
 ### Commissioning on CLD (2026-10-13 to 2026-10-15)

@@ -11,12 +11,12 @@ entries are not drawn; file names start with the number):
      versus fitted pT
   3. pT resolution versus true pT: sigma-equivalent of pT_fit / pT_true - 1 (half the 16-84% quantile width)
      for found, converged particles produced at r < max_prod_r
-  4. prompt vs displaced, efficiency (a, b) and fake rate (c, d). Efficiency: by the TRUE transverse
-     impact parameter of the particle (prompt |d0| < --prompt-max, displaced > --displaced-min;
-     defaults metrics.PROMPT_MAX / DISPLACED_MIN = 10 um / 5 mm, as in eval.py; particles in
-     between enter neither). Fake rate: a fake has no true d0, so converged tracks are split by their
-     FITTED impact-parameter significance (prompt-like |d0/sigma(d0)| < 3, displaced-like > 3)
-  5. prompt vs displaced pT resolution (a, b; true d0 classes of plot 4, common y range)
+  4. prompt vs displaced, efficiency (a, b) and fake rate (c, d). Efficiency: by the TRUE production
+     radius of the particle (prompt below --vertex-r, displaced above; default metrics.VERTEX_R =
+     50 mm, as in eval.py). Fake rate: a fake has no true vertex, so converged tracks are split by
+     their FITTED impact-parameter significance (prompt-like |d0/sigma(d0)| < 3, displaced-like > 3)
+  5. prompt vs displaced pT resolution (a, b; classes of plot 4, common y range; the resolution
+     sample's production-radius limit of analyze_fitted.py still applies)
 Error bars: binomial for rates, sigma / sqrt(2 N) for resolutions; bins with fewer than
 --min-n entries are not drawn.
 
@@ -47,7 +47,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from metrics import DISPLACED_MIN, PROMPT_MAX, d0_text
+from metrics import VERTEX_R
 from plotting import style
 EDGES = np.array([0.5, 1, 2, 5, 10, 20, 50, 100])
 SIG_CUT = 3.0                                                # fitted |d0/sigma(d0)|
@@ -148,8 +148,7 @@ def finish(ax, xlim, xlabel, ylabel, title, head, ylim=None, log_y=False):
         ax.set_title(process, loc="right", fontsize="medium")
 
 
-def sample_figs(d, entries, outdir, nmin, pt_min, pt_max, exp, exp_text, process,
-                prompt_max=PROMPT_MAX, displaced_min=DISPLACED_MIN):
+def sample_figs(d, entries, outdir, nmin, pt_min, pt_max, exp, exp_text, process, vertex_r=VERTEX_R):
     """one PDF per plot, in <outdir>/<sample>/; entries = [(label, chain indices, color or None)]
     (several indices = seeds of one model); returns the paths written."""
     import matplotlib; matplotlib.use("Agg")
@@ -180,8 +179,8 @@ def sample_figs(d, entries, outdir, nmin, pt_min, pt_max, exp, exp_text, process
             return 100 * s, 100 * e
         return f
 
-    cls = [("prompt", f"prompt (true $|d_0| < {d0_text(prompt_max)})", lambda d0: np.abs(d0) < prompt_max),
-           ("displaced", f"displaced (true $|d_0| > {d0_text(displaced_min)})", lambda d0: np.abs(d0) > displaced_min)]
+    cls = [("prompt", f"prompt (vertex R < {vertex_r:g} mm)", lambda r: r < vertex_r),
+           ("displaced", f"displaced (vertex R > {vertex_r:g} mm)", lambda r: r > vertex_r)]
     fcls = [("prompt", "prompt-like (fitted $|d_0/\\sigma(d_0)| < 3$)", lambda s: np.abs(s) < SIG_CUT),
             ("displaced", "displaced-like (fitted $|d_0/\\sigma(d_0)| > 3$)", lambda s: np.abs(s) >= SIG_CUT)]
     # 1. fit failures; legend: fraction among all candidates above pt_min (median over seeds)
@@ -212,7 +211,7 @@ def sample_figs(d, entries, outdir, nmin, pt_min, pt_max, exp, exp_text, process
     # 4. prompt vs displaced: efficiency, fake rate
     for c, (key, title, m) in enumerate(cls):
         fig, ax = new()
-        draw(ax, E, entries, lambda j: rate(g("p_chain", j), m(g("p_d0", j)), g("p_pt", j), E, nmin))
+        draw(ax, E, entries, lambda j: rate(g("p_chain", j), m(g("p_r", j)), g("p_pt", j), E, nmin))
         finish(ax, X, f"true {PT} [GeV]", "efficiency (found + fit converged)", f"efficiency, {title}",
                head, ylim=(0, 1.01))
         save(fig, f"4{'ab'[c]}_efficiency_{key}")
@@ -226,7 +225,7 @@ def sample_figs(d, entries, outdir, nmin, pt_min, pt_max, exp, exp_text, process
     figs = []
     for c, (key, title, m) in enumerate(cls):
         fig, ax = new()
-        draw(ax, R, entries, res_curve(lambda j: g("p_chain", j) & (g("p_r", j) < rmax) & m(g("p_d0", j))))
+        draw(ax, R, entries, res_curve(lambda j: g("p_chain", j) & (g("p_r", j) < rmax) & m(g("p_r", j))))
         ax.set_yscale("log")
         figs.append((fig, ax, title, f"5{'ab'[c]}_pt_resolution_{key}"))
     lo = min(a.get_ylim()[0] for _, a, _, _ in figs); hi = max(a.get_ylim()[1] for _, a, _, _ in figs)
@@ -256,9 +255,8 @@ def main():
     ap.add_argument("--min-n", type=int, default=100)
     ap.add_argument("--pt-min", type=float, default=0.5)
     ap.add_argument("--pt-max", type=float, default=50, help="upper end of the pT axes (a bin edge)")
-    ap.add_argument("--prompt-max", type=float, default=PROMPT_MAX, help="prompt: true |d0| below this [mm]")
-    ap.add_argument("--displaced-min", type=float, default=DISPLACED_MIN,
-                    help="displaced: true |d0| above this [mm]")
+    ap.add_argument("--vertex-r", type=float, default=VERTEX_R,
+                    help="prompt / displaced: true production radius below / above this [mm]")
     a = ap.parse_args()
     os.makedirs(a.outdir, exist_ok=True)
     ren = dict(r.split("=", 1) for r in a.label)
@@ -276,7 +274,7 @@ def main():
         else:
             entries = [(ren.get(c, c), [j], col.get(c)) for j, c in enumerate(chains)]
         out = sample_figs(d, entries, a.outdir, a.min_n, a.pt_min, a.pt_max, a.exp, a.exp_text, proc.get(str(d["tag"])),
-                          a.prompt_max, a.displaced_min)
+                          a.vertex_r)
         print(f"wrote {len(out)} plots to {os.path.dirname(out[0])}/")
 
 if __name__ == "__main__":

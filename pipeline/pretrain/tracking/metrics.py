@@ -2,20 +2,47 @@
 Shared evaluation definitions for [T]: ONE implementation, used by train.py (in-training
 monitor), eval.py (finding level) and genfit/analyze_fitted.py (fitted level).
 
-  truth_selection        -- the efficiency denominator: charged MC particles with
-                            pT > pt_cut and >= min_hits hits
+  truth_selection        -- the training labels and the monitor's efficiency denominator:
+                            charged MC particles with pT > pt_cut and >= min_hits hits
   track_sets / dm_match  -- truth and reconstructed hit sets, double-majority (DM) match:
                             a reco track matches a truth particle if purity > 0.5 AND
                             completeness > 0.5; a reco track matching none is a fake
+  EDGES / new_acc /      -- the in-training monitor's efficiency counts in true-pT bins
+  accumulate                (train.py -> metrics.jsonl -> plot_training.py)
+  VERTEX_R               -- prompt (production radius < 50 mm) / displaced (> 50 mm)
+  PURE / layer_edges /   -- the CLD detector paper's definitions (arXiv:1911.12230): pure track
+  layer_key /               (>= 75% of its hits from one particle), distinct sub-detector
+  proximity                 layers, particle proximity Delta_MC
+  overlap_table /        -- the IDEA community convention (one-to-one Hungarian matching,
+  one_to_one_match          criteria dm / purity75 / hungarian)
   truth_perigee          -- fitter-free truth reference: the true perigee parameters of a
                             charged particle (analytic helix from its MC production point,
                             transported to the PCA to the beamline), edm4hep conventions
   pt_from_omega          -- transverse momentum of a fitted track state
-  PROMPT_MAX /           -- the prompt / displaced classes by true |d0| (eval.py, analyze_fitted.py,
-  DISPLACED_MIN             genfit/plot_physics.py); d0_text writes a threshold for legends
-  overlap_table /        -- the IDEA community convention (one-to-one Hungarian matching,
-  one_to_one_match          criteria dm / purity75 / hungarian, all particles matched,
-                            efficiency over those with >= 3 hits), for eval.py --convention idea
+  origin_class           -- truth origin (prompt, heavy flavour, strange, in flight, material)
+
+How the conventions compare (eval.py --selection / --match):
+
+                     CLD paper                 IDEA (A. De Vita)            eval.py (fcc-mlpf)
+  matching takes     every MC particle         every particle with a hit    every MC particle
+  efficiency counts  genStatus 1, pT > 0.1,    >= 3 hits; curves also       charged, pT > 0.1 GeV,
+                     |cos theta| < 0.99, hits  10-170 deg, genStatus 0/1    >= 4 hits, 10-170 deg,
+                     on >= 4 distinct layers;                               Delta_MC > 0.02; status 1
+                     figures 10-170 deg,                                    (primary) or 0
+                     Delta_MC > 0.02                                        (secondaries)
+  matched if         a track is >= 75% pure    one-to-one assignment;       pure75 (as the paper) or
+                     (no completeness; several  criteria dm (both >= 0.5),  dm: purity AND
+                     tracks may claim one)      purity75, hungarian         completeness > 0.5
+  track minimum      4 hits                    3 hits                       4 hits (CLD), 3 (IDEA)
+  fake               track < 75% pure          track left unassigned        per matching
+  duplicates         not counted               fakes                        pure75: not counted;
+                                                                            dm: fakes
+The training labels and the in-training monitor (truth_selection, dm_match) use charged
+particles with pT > 0.1 GeV and >= 3 hits, any status, any angle; only those can own a track
+there, so a track on any other particle is a fake.
+Andrea's dm criterion is our double majority up to >= vs > (ties, which his assignment
+resolves); his purity75 is the paper's 75% rule made one-to-one, so a duplicate pure track
+is a fake for him and ignored by the paper.
 
 B is always an explicit argument (from the parquet metadata `B_tesla`, or the detector
 configuration in genfit/detectors.py) -- never a default.
@@ -23,16 +50,11 @@ configuration in genfit/detectors.py) -- never a default.
 import numpy as np
 
 C_LIGHT = 2.99792458e-4          # GeV / (T mm): pT = C_LIGHT * B * R
-# true |d0| [mm]. Displaced > 5 mm (user, 2026-11-09; was > 25 um): long-lived strange decays,
-# conversions and other material interactions, decays in flight. Heavy-flavour tracks (median
-# |d0| ~ 130 um) fall mostly in the unclassified band between the two; for them use the truth
-# origin (origin_class), not d0.
-PROMPT_MAX, DISPLACED_MIN = 0.010, 5.0
-
-
-def d0_text(mm):
-    """legend text (matplotlib mathtext) of a |d0| threshold in mm: um below 1 mm"""
-    return f"{mm * 1e3:g}\\,\\mu$m" if mm < 1 else f"{mm:g}\\,$mm"
+# Prompt / displaced by the true production radius (user, 2026-11-11: the CLD paper's vertex
+# cut, everywhere; was true |d0| < 10 um / > 5 mm). Displaced = long-lived strange decays,
+# conversions and other material interactions, decays in flight; heavy-flavour tracks are
+# produced within a few mm and count as prompt -- study them by truth origin (origin_class).
+VERTEX_R = 50.0                  # mm
 
 
 def truth_selection(hit_mc, mc_px, mc_py, mc_charge, pt_cut=0.1, min_hits=3):
@@ -52,6 +74,38 @@ def track_sets(lab, min_hits=3):
     return {t: h for t, h in d.items() if len(h) >= min_hits}
 
 
+# the in-training monitor's binned efficiency (true pT) and inclusive fake counts, per sample
+EDGES = np.array([0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100])
+
+
+def new_acc():
+    a = {k: np.zeros(len(EDGES) - 1) for k in ("gt_tot", "gt_m", "gt_b")}
+    # n_gt / n_match_*: every selected particle, also outside the pT bins
+    a.update(n_rec_m=0, n_fake_m=0, n_rec_b=0, n_fake_b=0, n_ev=0, has_base=False,
+             n_gt=0, n_match_m=0, n_match_b=0)
+    return a
+
+
+def accumulate(a, ev, pred):
+    """DM counts of one event (model pred, and the baseline if the event carries one)."""
+    gts = track_sets(ev["y"], 1)
+    a["n_gt"] += len(gts)
+    bins = lambda ts: np.searchsorted(EDGES, [ev["track_pt"][t] for t in ts]) - 1
+    for b in bins(gts):
+        if 0 <= b < len(EDGES) - 1:
+            a["gt_tot"][b] += 1
+    for finder, s in ((pred, "m"), (ev.get("base_y"), "b")):
+        if finder is None:
+            continue
+        a["has_base"] |= s == "b"
+        (_, _, nrec, nfake), pairs = dm_match(track_sets(np.asarray(finder, np.int64)), gts)
+        a[f"n_rec_{s}"] += nrec; a[f"n_fake_{s}"] += nfake; a[f"n_match_{s}"] += len(pairs)
+        for b in bins([t for _, t in pairs]):
+            if 0 <= b < len(EDGES) - 1:
+                a[f"gt_{s}"][b] += 1
+    a["n_ev"] += 1
+
+
 def dm_match(recos, gts):
     """-> ((n_gt, n_matched_gt, n_reco, n_fake), [(reco_id, gt_id), ...]).
     At most one truth particle can hold > 50% of a reco track's hits, so the match is 1:1."""
@@ -67,7 +121,50 @@ def dm_match(recos, gts):
     return (len(gts), len(matched), len(recos), fakes), pairs
 
 
-# ---- IDEA community convention (A. De Vita's IDEA tracking validation; eval.py --convention idea)
+# ---- CLD detector paper (arXiv:1911.12230, pp. 40-41, 46-50)
+PURE = 0.75                      # a track is pure if >= 75% of its hits come from one particle
+# Distinct layers are found from the hits: per hit role, bands in r (barrel roles, even) or
+# |z| and side (endcap roles, odd) separated by gaps larger than GAP, so double layers and the
+# paired module planes of one layer count once (CLD: 3 + 3 vertex, 3 + 7 inner, 3 + 4 outer
+# tracker layers). Wire hits (drift chamber) count one layer each.
+LAYER_GAP = {0: 3.0, 1: 3.0, 2: 10.0, 3: 10.0, 4: 10.0, 5: 10.0}      # mm
+WIRE_ROLE = 6
+
+
+def layer_edges(x, y, z, role):
+    """per silicon role: the boundaries between layer bands (sorted r or |z|, split at gaps)."""
+    r = np.hypot(x, y); edges = {}
+    for ro in np.unique(role):
+        if ro == WIRE_ROLE:
+            continue
+        v = np.sort((r if ro % 2 == 0 else np.abs(z))[role == ro])
+        g = np.where(np.diff(v) > LAYER_GAP.get(int(ro), 10.0))[0]
+        edges[int(ro)] = 0.5 * (v[g] + v[g + 1])
+    return edges
+
+
+def layer_key(x, y, z, role, edges):
+    """per hit: an id of its layer (role, endcap side, band); a wire hit is its own layer."""
+    r = np.hypot(x, y); key = -1 - np.arange(len(x), dtype=np.int64)
+    for ro, e in edges.items():
+        m = role == ro
+        v = r[m] if ro % 2 == 0 else np.abs(z[m])
+        side = (z[m] > 0).astype(np.int64) if ro % 2 == 1 else 0
+        key[m] = ro * 1000 + side * 100 + np.searchsorted(e, v)
+    return key
+
+
+def proximity(eta, phi, genstatus):
+    """Delta_MC per particle: sqrt(d_eta^2 + d_phi^2) to the nearest other generator-stable one."""
+    st = np.where(genstatus == 1)[0]
+    if len(st) < 2:
+        return np.full(len(eta), np.inf)
+    d = np.hypot(eta[:, None] - eta[st][None], np.angle(np.exp(1j * (phi[:, None] - phi[st][None]))))
+    d[st, np.arange(len(st))] = np.inf
+    return d.min(1)
+
+
+# ---- IDEA community convention (A. De Vita's IDEA tracking validation)
 # One-to-one matching: a global Hungarian assignment that maximizes the shared hits over the
 # truth-reco pairs a criterion allows; a reco track left unassigned is a fake.
 #   dm         purity >= 0.5 AND completeness >= 0.5 (the >= makes ties possible; the
@@ -79,8 +176,9 @@ def dm_match(recos, gts):
 # efficiency counts only particles with >= 3 hits (A. De Vita, 2026-11-10: ">= 3 hits on the
 # denominator"; over every particle with a hit, 77% of IDEA's have 1-2 hits and can never be
 # matched); the efficiency curves also select 10 deg < theta < 170 deg and generator status
-# 0 or 1. All cuts are applied AFTER the matching.
+# 0 or 1. All cuts are applied AFTER the matching. Tracks need >= 3 hits.
 IDEA_CRITERIA = ("dm", "purity75", "hungarian")
+IDEA_MIN_HITS, IDEA_THETA, IDEA_GEN = 3, (10.0, 170.0), (0, 1)
 
 
 def overlap_table(reco_lab, truth_lab):

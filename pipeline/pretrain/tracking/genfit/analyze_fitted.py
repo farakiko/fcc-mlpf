@@ -29,9 +29,9 @@ Definitions (metrics.py, identical to train.py / eval.py):
     absolute  ROC normalized to ALL true particles of a class in those events (unfound or
               unconverged ones never pass a cut): folds in the finding + fit efficiency,
               i.e. the impact-parameter tagging view
-  --classes   ROC signal/background: "d0" = true |d0| > 5 mm vs < 10 um (metrics.DISPLACED_MIN,
-              PROMPT_MAX); "origin" = tracks from b/c/tau decays vs prompt tracks
-              (metrics.origin_class, MC ancestry)
+  --classes   ROC signal/background: "vertex" = produced beyond vs within metrics.VERTEX_R
+              (50 mm, production radius); "origin" = tracks from b/c/tau decays vs prompt
+              tracks (metrics.origin_class, MC ancestry)
 
 Output (--outdir): fitted_eff_<tag>.pdf (chain/finding efficiency vs true pT, fake rate vs
 Genfit pT, fit-failure rate), fitted_res_<tag>.pdf (own sample: d0/z0/pT resolution, d0
@@ -40,7 +40,7 @@ pull width, ROC; absolute ROC), fitted_<tag>.txt (tables, incl. signal efficienc
 mistag in the three views), fitted_arrays_<tag>.npz (per-particle, per-track and per-candidate
 arrays for plot_physics.py), and per chain candidates_<tag>_<chain>.parquet: one row per
 candidate (fit status, hit counts, purity, dominant-owner truth and completeness, fitted pT
-and theta) -- the input of compare_fit_failures.py and of the CLD-paper fake rate (cld_paper.py).
+and theta) -- the input of compare_fit_failures.py and of eval.py plot --fitted (fake rate).
 
   python analyze_fitted.py --detector cld \
       --chain "single-detector training=fitted_single/*.root" \
@@ -60,7 +60,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, ".."))
 import detectors
 import edm4hep_io as io
-from metrics import (DISPLACED_MIN, PROMPT_MAX, d0_text, ORIGINS, dm_match, iqr_sigma, origin_class, pt_from_omega, truth_perigee,
+from metrics import (VERTEX_R, ORIGINS, dm_match, iqr_sigma, origin_class, pt_from_omega, truth_perigee,
                      truth_selection)
 from plotting import BASE_STYLE, style
 
@@ -222,9 +222,9 @@ def main():
     ap.add_argument("--b-tesla", type=float, default=None, help="default: detectors.py")
     ap.add_argument("--max-prod-r", type=float, default=100.0,
                     help="resolution sample: owner production radius [mm]")
-    ap.add_argument("--classes", default="d0", choices=["d0", "origin"],
-                    help="prompt/displaced definition for the ROC: true |d0| thresholds, or the "
-                         "truth origin (metrics.origin_class: prompt vs b/c/tau decay)")
+    ap.add_argument("--classes", default="vertex", choices=["vertex", "origin"],
+                    help="prompt/displaced definition for the ROC: production radius below/above "
+                         "metrics.VERTEX_R, or the truth origin (metrics.origin_class: prompt vs b/c/tau decay)")
     ap.add_argument("--max-files", type=int, default=0, help="per chain; 0 = all")
     ap.add_argument("--pt-min", type=float, default=0.5,
                     help="pT plots start at this bin edge [GeV] (tables keep every bin)")
@@ -259,7 +259,7 @@ def main():
         acc[lab0] = new_acc()
         process(chains[0][1], cfg, base, base, B, acc[lab0])
     labels = list(acc)
-    style = {l: (BASE_STYLE if l == "baseline tracking" else style(j))
+    sty = {l: (BASE_STYLE if l == "baseline tracking" else style(j))
              for j, l in enumerate(labels)}
 
     # ---------------- tables ----------------
@@ -285,11 +285,11 @@ def main():
     # identical truth for all chains, so differences are due to hit content and fit alone.
     # absolute ROC: normalized to ALL true particles of a class in those events, so it folds
     # in the finding + fit efficiency (the impact-parameter tagging view).
-    if args.classes == "d0":
-        is_sig = lambda p: abs(p["y"][0]) > DISPLACED_MIN
-        is_bkg = lambda p: abs(p["y"][0]) < PROMPT_MAX
-        sig_lab = f"displaced (true $|d_0| > {d0_text(DISPLACED_MIN)})"
-        bkg_lab = f"prompt (true $|d_0| < {d0_text(PROMPT_MAX)})"
+    if args.classes == "vertex":
+        is_sig = lambda p: p["r"] > VERTEX_R
+        is_bkg = lambda p: p["r"] < VERTEX_R
+        sig_lab = f"displaced (vertex R > {VERTEX_R:g} mm)"
+        bkg_lab = f"prompt (vertex R < {VERTEX_R:g} mm)"
     else:
         is_sig = lambda p: p["origin"] == "hf"
         is_bkg = lambda p: p["origin"] == "prompt"
@@ -399,7 +399,7 @@ def main():
     ratio = lambda n, d, nmin=20: np.where(d > nmin, n / np.maximum(d, 1), np.nan)
     fig, axes = plt.subplots(1, 3, figsize=(18, 4.8))
     for l in labels:
-        a, (c, st) = acc[l], style[l]
+        a, (c, st) = acc[l], sty[l]
         axes[0].plot(ectr, ratio(a["chain"], a["gt"]), st, color=c, label=l)
         axes[0].plot(ectr, ratio(a["found"], a["gt"]), ":", color=c, lw=1)
         fk = ratio(a["fit_fake"], a["fit"])
@@ -428,7 +428,7 @@ def main():
                 v = 100 * (d["P"][:, 2] / d["Y"][:, 2] - 1) if col == 2 else 1e3 * (d["P"][:, col] - d["Y"][:, col])
                 ys = [iqr_sigma(v[(d["PT"] >= RES_EDGES[j]) & (d["PT"] < RES_EDGES[j + 1])], 30)
                       for j in range(len(rctr))]
-                ax.plot(rctr_p, ys, style[l][1], color=style[l][0], label=l)
+                ax.plot(rctr_p, ys, sty[l][1], color=sty[l][0], label=l)
             ax.set_xscale("log"); ax.set_yscale("log")
             ax.set_xlabel("true $p_T$ [GeV]", fontsize=FS); ax.set_ylabel(lab, fontsize=FS)
             ax.legend(fontsize=FS - 3); ax.grid(alpha=0.3, which="both")
@@ -440,7 +440,7 @@ def main():
                 continue
             pu = (d["P"][:, 0] - d["Y"][:, 0]) / np.clip(d["S"][:, 0], 1e-12, None)
             ax.plot(rctr_p, [iqr_sigma(pu[(d["PT"] >= RES_EDGES[j]) & (d["PT"] < RES_EDGES[j + 1])], 30)
-                           for j in range(len(rctr))], style[l][1], color=style[l][0], label=l)
+                           for j in range(len(rctr))], sty[l][1], color=sty[l][0], label=l)
         ax.axhline(1, color="k", ls=":")
         ax.set_xscale("log"); ax.set_xlabel("true $p_T$ [GeV]", fontsize=FS)
         ax.set_ylabel("$d_0$ pull width (1 = honest)", fontsize=FS)
@@ -448,7 +448,7 @@ def main():
 
     def roc_panel(ax, rocs, title):
         for l, (x, y) in rocs.items():
-            ax.plot(x, y, "-", color=style[l][0], label=l)
+            ax.plot(x, y, "-", color=sty[l][0], label=l)
         ax.set_xscale("log"); ax.set_xlim(1e-4, 1); ax.set_ylim(0, 1.02)
         ax.set_xlabel(f"mistag rate, {bkg_lab}", fontsize=FS - 2)
         ax.set_ylabel(f"efficiency, {sig_lab}", fontsize=FS - 2)
@@ -463,7 +463,7 @@ def main():
         if d["bkg"].any():
             ax.hist((d["P"][:, 0] / np.clip(d["S"][:, 0], 1e-12, None))[d["bkg"]],
                     bins=np.linspace(-15, 15, 91), histtype="step", lw=1.5, density=True,
-                    color=style[l][0], label=l)
+                    color=sty[l][0], label=l)
     ax.set_yscale("log"); ax.set_ylim(1e-4, 1)
     ax.set_xlabel(f"$d_0/\\sigma(d_0)$, {bkg_lab}", fontsize=FS - 1)
     ax.legend(fontsize=FS - 4)

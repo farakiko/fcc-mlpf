@@ -129,8 +129,8 @@ In addition:
   that every chain processed (matched by an MC fingerprint), so that differences come from the
   hit content and the fit alone. *Absolute*: the discrimination normalized to all true
   particles of a class, found or not, which folds in the finding and fit efficiencies.
-- **classes** (`--classes`): `d0` compares true |d0| > 5 mm with < 10 µm
-  (`metrics.DISPLACED_MIN`, `PROMPT_MAX`); `origin` compares tracks from b, c and τ decays with
+- **classes** (`--classes`): `vertex` compares particles produced beyond 50 mm with those
+  produced within (`metrics.VERTEX_R`, production radius); `origin` compares tracks from b, c and τ decays with
   prompt tracks, by MC ancestry (`metrics.origin_class`: the nearest weakly decaying ancestor
   decides; particles created by the simulator are strange-decay, decay-in-flight or material
   secondaries). The efficiency per origin class is tabulated in either mode.
@@ -144,7 +144,7 @@ failures by candidate class and the signal efficiency at 1% mistag in the three 
 `fitted_arrays_<tag>.npz` (the per-particle, per-track and per-candidate arrays read by
 `plot_physics.py`), and per chain `candidates_<tag>_<chain>.parquet`, one row per candidate
 (fit status, hit counts, purity, the dominant particle's truth and completeness, fitted pT and
-θ), read by `compare_fit_failures.py` and by the fake rate of `../cld_paper.py`.
+θ), read by `compare_fit_failures.py` and by the fake rate of `../eval.py plot --fitted`.
 
 `analyze_fitted.py` quotes resolutions as IQR/1.349 (`metrics.iqr_sigma`), while
 `plot_physics.py` draws half the 16-84% width (`sigma68`); the two agree for Gaussian residuals

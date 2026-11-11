@@ -42,8 +42,7 @@ from scipy.optimize import linear_sum_assignment
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data import build_cache, build_shards, load_shard, sample_of
-from eval import EDGES, accumulate, new_acc
-from metrics import dm_match, track_sets
+from metrics import EDGES, accumulate, dm_match, new_acc, track_sets
 from model import TrackFormer
 from plot_training import plot_training
 
@@ -121,7 +120,7 @@ def event_loss(model, ev, dev):
 @torch.no_grad()
 def evaluate(model, evs, dev, thr=0.5):
     """-> ({sample: (model_eff, model_fake, base_eff|None, base_fake|None, n_gt)},
-    {sample: eval.py's binned counts in true pT}), sample = dataset (data.sample_of).
+    {sample: metrics.accumulate's binned counts in true pT}), sample = dataset (data.sample_of).
     Finding level only (metrics.dm_match); fitted quantities come from the Genfit chain."""
     acc, bins = {}, {}
     for ev in evs:
@@ -401,7 +400,7 @@ def main():
             res, bins = evaluate(model, eval_sub, dev)
             rec["dm"] = {d: [round(v, 4) if v is not None else None for v in r[:4]]
                          for d, r in res.items()}
-            rec["pt_edges"] = EDGES.tolist()          # eval.py's binning, true pT [GeV]
+            rec["pt_edges"] = EDGES.tolist()          # metrics.EDGES, true pT [GeV]
             rec["dm_pt"] = {d: {k: v.astype(int).tolist() for k, v in a.items()
                                 if isinstance(v, np.ndarray)} for d, a in bins.items()}
             for d, (me, mf, be, bf, n) in sorted(res.items()):

@@ -57,9 +57,14 @@ mean something else in the ML literature.
 - **Splits**: the held-out set is the first 10% of the sorted chunks of each dataset
   (`--test-first N` for one dataset, `--test-frac 0.1` for several, applied per glob). No third
   split; "validation" means this held-out set.
-- **Prompt / displaced**: true |d0| < 10 µm / > 5 mm (2026-11-09; was > 25 µm), in
-  `metrics.PROMPT_MAX` / `DISPLACED_MIN`. Heavy flavour sits between the two and is studied by
-  truth origin (`--classes origin`), not by d0.
+- **Prompt / displaced**: production radius < 50 mm / > 50 mm, everywhere (2026-11-11, the CLD
+  paper's vertex cut; was true |d0| < 10 µm / > 5 mm), in `metrics.VERTEX_R`. Heavy flavour is
+  produced within a few mm, counts as prompt, and is studied by truth origin (`--classes origin`).
+- **Evaluation** (2026-11-11): one `eval.py`, the CLD paper's figures. One denominator for every
+  matching: charged, pT > 0.1 GeV, ≥ 4 hits, 10° < θ < 170°, ΔMC > 0.02, generator status 1
+  (figures without suffix, read against the paper) or 0 (`*_secondaries`); matchings `pure75`
+  (the paper's) and `dm` (double majority), as `<figure>[_secondaries]_<match>.pdf`. IDEA: A. De Vita's
+  definitions by default.
 - **IDEA convention**: the IDEA efficiency always counts particles with ≥ 3 hits in the
   denominator (A. De Vita, 2026-11-10); never quote the every-particle efficiency (about 0.12).
 - **[C] follows HitPF** (2026-10-26) for truth objects, labels, matching and metrics, and lists
@@ -67,8 +72,8 @@ mean something else in the ML literature.
   warmup, fp32 (the `train.py` defaults since 2026-11-11).
 - **First version of any training on CLD tt̄**, later versions add samples; every version is
   evaluated on every sample separately (2026-10-29).
-- **Curve names**: "baseline tracking" (conformal + Kalman), "single-detector training",
-  "mixed-detector training". Model names in `docs/results.md`: v1, v1.1, v2, v3a/b.
+- **Curve names** (2026-11-11): "Conformal tracking", "ML tracking (CLD-only training)", "ML
+  tracking (CLD+IDEA training)". Model names in `docs/results.md`: v1, v1.1, v2, v3a/b.
 
 ## Standing conclusions to respect
 
@@ -141,8 +146,8 @@ READMEs and docs follow the user's papers (e.g. arXiv:2606.14373):
 - `postprocessing/`: EDM4hep → canonical parquet (`cld.py`, `idea.py`, `schema.py`,
   `batch_convert.py`); every derived dataset carries a `SOURCE.txt`.
 - `pipeline/pretrain/tracking/` ([T]): `data.py`, `model.py` (`TrackFormer.assign`, the one
-  decision rule; `load_checkpoint`), `metrics.py`, `train.py`, `eval.py`, `overlay_evals.py`,
-  `plot_training.py`, `plot_features.py`, `cld_paper.py`.
+  decision rule; `load_checkpoint`), `metrics.py`, `train.py`, `eval.py`, `plot_training.py`,
+  `plot_features.py`, `plotting.py`.
 - `pipeline/pretrain/tracking/genfit/`: `detectors.py`, `edm4hep_io.py`, steps A-E
   (`export_infer.py`, `write_mltracks.py`, `run_genfit.py`, `states_to_parquet.py`,
   `analyze_fitted.py`), `run_chain.sh` (A-C, optionally E, over many files and models),

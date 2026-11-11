@@ -15,9 +15,7 @@ consumes.
 | `model.py` | TrackFormer; `assign`, the rule that turns the model output into track candidates; `load_checkpoint` |
 | `metrics.py` | the definitions shared by training, evaluation and the fitted-level analysis |
 | `train.py` | training with the in-training monitor |
-| `eval.py` | finding-level evaluation of a checkpoint against the classical baseline |
-| `overlay_evals.py` | several evaluations overlaid, per sample |
-| `cld_paper.py` | track finding in the definitions of the CLD detector paper |
+| `eval.py` | finding-level evaluation of any number of checkpoints against the classical baseline, in the CLD paper's or the IDEA validation's figures |
 | `plot_training.py` | training curves of one run, or of several runs compared |
 | `plot_features.py` | the input-feature distributions of CLD and IDEA |
 | `genfit/` | the track fit and the fitted-level evaluation |
@@ -142,59 +140,67 @@ shared vertex roles are where transfer between detectors is designed to happen.
 ## From model output to track candidates
 
 `TrackFormer.assign` is the one rule that turns the model output into candidates, used by the
-monitor, `eval.py`, `cld_paper.py` and the Genfit chain alike. A slot is active if its activity
+monitor, `eval.py` and the Genfit chain alike. A slot is active if its activity
 exceeds 0.5, and a hit joins its most probable active slot if that probability exceeds 0.5;
 other hits are background. The optional `rescue = (K, P_HI, FLOOR)` also accepts a slot below
 the activity threshold (but above `FLOOR`) that holds at least K still-unassigned hits with
 probability above `P_HI`, because real tracks with confident hits but a low slot activity are
 the dominant inefficiency of the model on CLD (2026-11-11). It is exposed as `--rescue` in
-`cld_paper.py run` and `genfit/export_infer.py`, and as `-r` in `genfit/run_chain.sh`.
+`eval.py run` (on by default for CLD, (4, 0.95, 0.05); off for IDEA until checked there) and
+`genfit/export_infer.py`, and as `-r` in `genfit/run_chain.sh`. The in-training monitor uses
+the plain rule.
 
 ## Evaluation
 
 The evaluation runs at two levels, which share one implementation of the definitions
-(`metrics.py`). A truth particle is selected if it is charged, has pT > 0.1 GeV and at least
-three hits. A candidate finds it by double majority: more than half of the candidate's hits
-belong to the particle, and the candidate holds more than half of the particle's hits. A
-candidate that finds no particle is a fake.
+(`metrics.py`, where the three conventions below are compared side by side). Prompt and
+displaced particles are separated by the production radius: below or above 50 mm
+(`metrics.VERTEX_R`, the vertex cut of the CLD paper).
 
-**Finding level, without a fit.** `eval.py` scores a checkpoint on held-out chunks, per sample,
-with the classical baseline evaluated identically where the files carry one (CLD conformal
-tracking):
+**Finding level, without a fit.** `eval.py run` applies any number of checkpoints to held-out
+chunks, with the classical baseline evaluated identically where the files carry one (CLD
+conformal tracking), and stores per-particle and per-track arrays per sample; `eval.py plot`
+draws the figures from them:
 
 ```bash
-python eval.py --ckpt runs/t_cld/ep_019.pt --inputs '<derived>/cld_ttbar/chunk_000[0-4]*.parquet' \
-    --shard-cache DIR --outdir runs/t_cld/eval
-python overlay_evals.py --run "v1=runs/t_cld/eval/" --run "v2=runs/t_cld_all/eval/" --tag cld
+python eval.py run --inputs '<derived>/cld_91gev/chunk_000[0-4]*.parquet' \
+    --ckpt "v2=runs/t_cld_all/ep_019.pt" --ckpt "v2.1=runs/t_cld_all_idea/ep_019.pt" --outdir ev/
+python eval.py plot ev/ --label "v2=ML tracking (CLD-only training)" --match pure75 dm
 ```
 
-It writes the efficiency versus true pT, inclusive and split into prompt (true |d0| < 10 µm)
-and displaced (> 5 mm) particles, the inclusive fake rate, the binned counts
-(`eval_binned_<sample>.npz`) and, for several samples, an overview (`eval_samples.pdf`). A fake
-has no truth particle, so a fake rate versus pT requires a fitted pT and belongs to the fitted
-level. `overlay_evals.py` overlays several evaluations and the baseline per sample, with a
-summary page of the inclusive efficiency and fake rate; `--no-baseline` omits the baseline.
-This level is cheap enough to run on every checkpoint.
+One denominator serves every matching (2026-11-11): charged particles with pT > 0.1 GeV, at
+least four hits, 10° < θ < 170° and a particle proximity ΔMC > 0.02 rad, in two versions:
+generator status 1 (`primary`, the CLD paper's population; figures without a suffix) and
+generator status 0 (`secondaries`, particles created by the simulation: interactions in the
+material, decays in flight, conversions; only the efficiency versus pT, `*_secondaries`). The figures are those
+of the CLD paper (arXiv:1911.12230, Sec. 7.2.2): efficiency versus pT, θ, φ, ΔMC and
+production radius, with production radius < 50 mm and pT > 1 GeV where pT is not the axis,
+plus the efficiency versus pT and θ of displaced particles; a figure never cuts on its own axis
+variable. Three matchings are available (`--match`); the figures of a sample sit in one directory, named
+`<figure>[_secondaries]_<match>.pdf`:
 
-**The IDEA convention.** `eval.py --convention idea` adds the definitions of the IDEA tracking
-validation (A. De Vita), so that IDEA results can be read against IDEA studies. The matching is
-a global one-to-one (Hungarian) assignment that maximizes the shared hits, under three
-criteria: double majority with ≥ 0.5 (`dm`), purity ≥ 0.75 without a completeness requirement
-(`purity75`), and no threshold (`hungarian`). Every MC particle with a hit enters the matching,
-and the fake rate counts every track left unassigned. The efficiency counts the particles with
-at least three hits: over every particle with a hit, 77% of the IDEA particles have one or two
-hits and could never be matched. The efficiency curves (versus true pT, polar angle and
-production radius) also select 10° < θ < 170° and generator status 0 or 1. All cuts are
-applied after the matching. The implementation reproduces the counts of the reference code
-exactly on 200 IDEA events.
+- `pure75`, the CLD paper's: a particle is found if a track of at least four hits takes at least
+  75% of its hits from it, with no completeness requirement; a track below 75% purity is a fake,
+  and a second pure track of the same particle is neither.
+- `dm`, double majority: the track also holds more than half of the particle's hits; a track
+  that is not double-majority matched (a contaminated track, or a fragment of a split particle)
+  is a fake.
+- `pure75complete`, both: a track at least 75% pure that also holds more than half of the
+  particle's hits; any other track is a fake. Neither a fragment of a split particle nor a
+  contaminated track counts (2026-11-11: both failure modes cost after the fit, see
+  `docs/results.md`).
 
-**The CLD paper's definitions.** `cld_paper.py` evaluates track finding as the CLD detector
-paper does (arXiv:1911.12230, Sec. 7.2.2): reconstructable particles (generator status 1,
-pT > 0.1 GeV, |cos θ| < 0.99, hits on at least four layers), a particle reconstructed by a
-track of at least four hits with at least 75% of its hits from that particle (`--match dm` for
-double majority), and the fake rate versus the fitted pT and θ, taken from the candidate tables
-of `genfit/analyze_fitted.py`. This allows the ML track finders and the baseline to be compared
-with the published CLD numbers.
+For IDEA, the IDEA tracking validation's definitions (A. De Vita) are the default: every MC
+particle with a hit enters a one-to-one (Hungarian) assignment that maximizes the shared hits,
+under one of three criteria (purity and completeness ≥ 0.5, `idea-dm`; purity ≥ 0.75,
+`idea-purity75`; no threshold, `idea-hungarian`); a track left unassigned is a fake; the
+efficiency counts particles with at least three hits, 10° < θ < 170° and generator status 0
+or 1 (`--selection idea`), versus true pT, θ and production radius in the validation's binning.
+
+`summary.txt` gives, per sample and track finder, the efficiency under every combination and
+the fake rate before the fit under every matching. A fake rate versus pT or θ needs fitted
+parameters: `plot --fitted FINDER=CANDIDATES.parquet` draws it from the candidate tables of
+`genfit/analyze_fitted.py`. Two thousand CLD events take about half a minute on a GPU.
 
 **Fitted level.** The chain in [`genfit/`](genfit/README.md) fits the candidates, and
 `genfit/analyze_fitted.py` reports the chain efficiency (found and fit converged), the fake rate
