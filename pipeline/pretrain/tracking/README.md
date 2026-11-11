@@ -190,10 +190,11 @@ held-out IDEA test = 2,500 events / 62,020 particles.
 | mixed-detector training (CLD + 22.5k IDEA ev) | 0.790 | 0.053 | 0.727 | 0.047 |
 
 The single-detector model does not transfer to the drift chamber (zero-shot collapse), while
-the jointly trained model covers both detectors with one set of weights and improves on the
-CLD-only model on CLD itself; the improvement persists at an equal number of optimizer
-updates. Known caveats: one seed per configuration, and a CLD-dominated track mix (≈90:10);
-the planned controls are a duplicate-data run and a fine-tuning scan on IDEA sample size.
+the jointly trained model covers both detectors with one set of weights. The CLD numbers
+above are single-seed: a seed study (2026-10-30, three seeds per configuration, full held-out
+set) found seed spreads of 1–2 points with a heavy tail and no improvement on CLD from the IDEA
+admixture (efficiency at or below the CLD-only model); more CLD tt̄ at the same step count did
+better. Mixing buys the second detector; it does not improve the first.
 
 ## Track fitting
 

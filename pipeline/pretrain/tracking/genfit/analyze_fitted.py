@@ -29,8 +29,9 @@ Definitions (metrics.py, identical to train.py / eval.py):
     absolute  ROC normalized to ALL true particles of a class in those events (unfound or
               unconverged ones never pass a cut): folds in the finding + fit efficiency,
               i.e. the impact-parameter tagging view
-  --classes   ROC signal/background: "d0" = true |d0| > 25 um vs < 10 um; "origin" = tracks
-              from b/c/tau decays vs prompt tracks (metrics.origin_class, MC ancestry)
+  --classes   ROC signal/background: "d0" = true |d0| > 5 mm vs < 10 um (metrics.DISPLACED_MIN,
+              PROMPT_MAX); "origin" = tracks from b/c/tau decays vs prompt tracks
+              (metrics.origin_class, MC ancestry)
 
 Output (--outdir): fitted_eff_<tag>.pdf (chain/finding efficiency vs true pT, fake rate vs
 Genfit pT, fit-failure rate), fitted_res_<tag>.pdf (own sample: d0/z0/pT resolution, d0
@@ -38,8 +39,8 @@ pull width, d0 significance, ROC), fitted_common_<tag>.pdf (common sample: resol
 pull width, ROC; absolute ROC), fitted_<tag>.txt (tables, incl. signal efficiency at 1%
 mistag in the three views), fitted_arrays_<tag>.npz (per-particle, per-track and per-candidate
 arrays for plot_physics.py), and per chain candidates_<tag>_<chain>.parquet: one row per
-candidate (fit status, hit counts, purity, dominant-owner truth, fitted pT and theta) -- the
-input of fit-failure studies (fit_failure_study.py) and of the CLD-paper fake rate (cld_paper.py).
+candidate (fit status, hit counts, purity, dominant-owner truth and completeness, fitted pT
+and theta) -- the input of compare_fit_failures.py and of the CLD-paper fake rate (cld_paper.py).
 
   python analyze_fitted.py --detector cld \
       --chain "single-detector training=fitted_single/*.root" \
@@ -69,7 +70,7 @@ STYLE = [("tab:blue", "o-"), ("tab:green", "d-"), ("tab:purple", "^-"), ("tab:re
 BASE_STYLE = ("tab:orange", "s--")
 CAND_COLS = ["file", "event", "cand", "nhits", "nwire", "converged", "chi2", "ndf",
              "found", "purity", "owner_pt", "owner_eta", "owner_pdg", "owner_prod_r",
-             "owner_d0", "fit_pt", "fit_theta"]
+             "owner_d0", "fit_pt", "fit_theta", "owner_completeness"]
 
 
 def pair_fits(cand, fits, states):
@@ -176,7 +177,8 @@ def process(files, cfg, cand_name, fit_name, B, a):
                                   bool(conv[k]), st["chi2"] if st else np.nan, st["ndf"] if st else -1,
                                   k in found, purity, o["pt"], o["eta"], o["pdg"], o["r"], o["d0"],
                                   pt_from_omega(st["par"][2], B) if conv[k] else np.nan,
-                                  np.pi / 2 - np.arctan(st["par"][4]) if conv[k] else np.nan))
+                                  np.pi / 2 - np.arctan(st["par"][4]) if conv[k] else np.nan,
+                                  float(np.sum(lab == own)) / max(int(np.sum(mc == own)), 1) if own >= 0 else 0.0))
         print(f"  {os.path.basename(fp)}: {a['n_cand']} candidates, {a['n_conv']} converged "
               f"(cumulative)", flush=True)
 

@@ -11,6 +11,9 @@ Definitions (paper pp. 40-41 and 46-50):
   efficiency       reconstructable particles with a pure track / reconstructable particles
   Delta_MC         particle proximity, sqrt(d_eta^2 + d_phi^2) to the nearest other generator-
                    stable particle
+  --match dm       double majority instead of the 75% purity (purity > 0.5 AND the track holds
+                   > 50% of the particle's hits; fake = not double-majority matched); every other
+                   selection unchanged
   fake rate        impure tracks / tracks with >= 4 hits, versus RECONSTRUCTED pT and theta: this
                    needs fitted parameters and is computed from the candidate tables of
                    genfit/analyze_fitted.py (columns fit_pt, fit_theta), see `plot --fakes`
@@ -56,9 +59,11 @@ def layer_key(x, y, z, role, edges):
 
 
 def pure_owners(track_lab, hit_mc):
-    """track label per hit (-1 = none) -> ({particle reconstructed by a pure track}, per-track
-    (n_hits, purity)) for tracks with >= MIN_TRACK_HITS hits."""
-    owners, tracks = set(), []
+    """track label per hit (-1 = none) -> ({particle reconstructed by a pure track},
+    {particle double-majority matched: purity > 0.5 AND > 50% of the particle's hits},
+    per-track (n_hits, purity)) for tracks with >= MIN_TRACK_HITS hits."""
+    owners, dm, tracks = set(), set(), []
+    nh = np.bincount(hit_mc[hit_mc >= 0]) if (hit_mc >= 0).any() else np.zeros(0, int)
     for t in np.unique(track_lab[track_lab >= 0]):
         h = hit_mc[track_lab == t]
         if len(h) < MIN_TRACK_HITS:
@@ -67,11 +72,13 @@ def pure_owners(track_lab, hit_mc):
         if len(lab) == 0:
             tracks.append((len(h), 0.0)); continue
         v, c = np.unique(lab, return_counts=True)
-        pur = c.max() / len(h)
+        o, pur = int(v[c.argmax()]), c.max() / len(h)
         tracks.append((len(h), pur))
         if pur >= PURE:
-            owners.add(int(v[c.argmax()]))
-    return owners, tracks
+            owners.add(o)
+        if pur > 0.5 and c.max() / nh[o] > 0.5:
+            dm.add(o)
+    return owners, dm, tracks
 
 
 def run(args):
@@ -87,8 +94,10 @@ def run(args):
     files = sorted(sum((globlib.glob(p) for p in args.inputs), []))
     assert files, args.inputs
     finders = ["baseline"] + [l for l, _ in models]
+    rescue = tuple(float(v) for v in args.rescue.split(",")) if args.rescue else None
     out = {k: [] for k in ("pt", "theta", "phi", "rprod", "nlay", "dmc", "reconstructable")}
     out.update({f"rec_{f}": [] for f in finders})
+    out.update({f"dm_{f}": [] for f in finders})
     trk = {f: [] for f in finders}
     edges, n_ev = None, 0
     for fp in files:
@@ -129,11 +138,12 @@ def run(args):
                 xt, et = torch.from_numpy(x).to(dev), torch.from_numpy(etaphi).to(dev)
                 with torch.no_grad():
                     for lab, mdl in models:
-                        labs[lab] = np.asarray(mdl.assign(xt, et), np.int64)
+                        labs[lab] = np.asarray(mdl.assign(xt, et, rescue=rescue), np.int64)
             sel = np.where(reco | ((gs == 1) & (np.abs(c["mc_charge"]) > 0) & (nlay > 0)))[0]
             for f in finders:
-                own, tr = pure_owners(labs[f], hm)
+                own, dmo, tr = pure_owners(labs[f], hm)
                 out[f"rec_{f}"].append(np.isin(sel, list(own)))
+                out[f"dm_{f}"].append(np.isin(sel, list(dmo)))
                 trk[f] += tr
             for k, a in (("pt", pt), ("theta", theta), ("phi", phi), ("rprod", np.hypot(c["mc_vx"], c["mc_vy"])),
                          ("nlay", nlay), ("dmc", dmc), ("reconstructable", reco)):
@@ -168,6 +178,9 @@ def plot(args):
     plt.style.use(hep.style.CMS)
     os.makedirs(args.outdir, exist_ok=True)
     data = {k: np.load(v) for k, v in (s.split("=", 1) for s in args.npz)}
+    dm = args.match == "dm"
+    REC = "dm" if dm else "rec"
+    MATCH_TXT = "double majority" if dm else "track purity $\\geq$ 75%"
     labels = dict(s.split("=", 1) for s in args.label)
     STY = [("tab:blue", "o"), ("tab:red", "D"), ("tab:green", "^"), ("tab:purple", "v")]
     PROC = {"uds365": "$Z \\to q\\bar{q}$ ($q$ = u,d,s), $\\sqrt{s}$ = 365 GeV",
@@ -183,7 +196,7 @@ def plot(args):
         ctr = np.sqrt(edges[:-1] * edges[1:]) if logx else 0.5 * (edges[:-1] + edges[1:])
         for j, f in enumerate(finders):
             col, mk = ("k", "s") if f == "baseline" else STY[(j - 1) % len(STY)]
-            e, lo, hi, n = binned(x(d)[r], d[f"rec_{f}"][r], edges)
+            e, lo, hi, n = binned(x(d)[r], d[f"{REC}_{f}"][r], edges)
             ok = n > 0
             ax.errorbar(ctr[ok], e[ok], yerr=[lo[ok], hi[ok]], fmt=mk, ms=5, color=col, mfc="none" if f == "baseline" else col,
                         capsize=0, elinewidth=1, label=labels.get(f, f))
@@ -198,9 +211,9 @@ def plot(args):
         ax.set_xlabel(xlabel); ax.set_ylabel("Tracking efficiency")
         ax.legend(title=PROC[sample] + "\n" + sel_txt, loc="lower left", fontsize="x-small",
                   title_fontsize="x-small", alignment="left", frameon=False)
-        hep.label.exp_label(exp="CLD", text="Full Sim", data=True, loc=0, rlabel="track purity $\\geq$ 75%", ax=ax)
+        hep.label.exp_label(exp="CLD", text="Full Sim", data=True, loc=0, rlabel=MATCH_TXT, ax=ax)
         fig.tight_layout(); fig.savefig(os.path.join(args.outdir, f"{name}.pdf")); plt.close(fig)
-        print(f"wrote {name}.pdf | " + ", ".join(f"{f} {d[f'rec_{f}'][r].mean():.4f}" for f in finders) + f" (n = {int(r.sum())})")
+        print(f"wrote {name}.pdf | " + ", ".join(f"{f} {d[f'{REC}_{f}'][r].mean():.4f}" for f in finders) + f" (n = {int(r.sum())})")
 
     th = lambda d: np.degrees(d["theta"])
     thc = lambda d: (th(d) > 10) & (th(d) < 170)
@@ -231,19 +244,21 @@ def plot(args):
                     "$p_\\mathrm{T}$ > 1 GeV, $10^\\circ < \\theta < 170^\\circ$, $\\Delta_{MC}$ > 0.02 rad",
                     lambda d: pt1(d) & thc(d) & iso(d), "vertex R [mm]", (0, 1.2))
     if args.fakes:
-        fakes(args, plt, hep, labels, STY, PROC, PTE, LOG_LAB)
+        fakes(args, plt, hep, labels, STY, PROC, PTE, LOG_LAB, dm)
 
 
-def fakes(args, plt, hep, labels, STY, PROC, PTE, LOG_LAB):
+def fakes(args, plt, hep, labels, STY, PROC, PTE, LOG_LAB, dm=False):
     """fake rate vs reconstructed pT / theta from analyze_fitted.py candidate tables (converged
-    fits only: unconverged candidates have no reconstructed parameters)."""
+    fits only: unconverged candidates have no reconstructed parameters). dm: a fake is a track
+    that is not double-majority matched (purity <= 0.5 or <= 50% of its particle's hits)."""
     import pyarrow.parquet as pq
     from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
     sample, spec = args.fakes.split("=", 1)
     chains = [s.split("=", 1) for s in spec.split(",")]           # finder=candidates.parquet
     tabs = {}
     for f, p in chains:
-        t = pq.read_table(p, columns=["nhits", "converged", "purity", "fit_pt", "fit_theta"]).to_pydict()
+        t = pq.read_table(p, columns=["nhits", "converged", "purity", "fit_pt", "fit_theta"]
+                          + (["owner_completeness"] if dm else [])).to_pydict()
         tabs[f] = {k: np.asarray(v) for k, v in t.items()}
     for name, xf, edges, cut, xl, txt, logx in (
             ("fake_vs_pt_ttbar", lambda t: t["fit_pt"], PTE, lambda t: (np.degrees(t["fit_theta"]) > 10) & (np.degrees(t["fit_theta"]) < 170),
@@ -258,11 +273,12 @@ def fakes(args, plt, hep, labels, STY, PROC, PTE, LOG_LAB):
             t = tabs[f]
             col, mk = ("k", "s") if f == "baseline" else STY[(j - 1) % len(STY)]
             m = t["converged"].astype(bool) & (t["nhits"] >= MIN_TRACK_HITS) & np.isfinite(t["fit_pt"]) & cut(t)
-            e, lo, hi, n = binned(xf(t)[m], t["purity"][m] < PURE, edges)
+            bad = ~((t["purity"] > 0.5) & (t["owner_completeness"] > 0.5)) if dm else t["purity"] < PURE
+            e, lo, hi, n = binned(xf(t)[m], bad[m], edges)
             ok = n > 0
             ax.errorbar(ctr[ok], e[ok], yerr=[lo[ok], hi[ok]], fmt=mk, ms=5, color=col, mfc="none" if f == "baseline" else col,
                         capsize=0, elinewidth=1, label=labels.get(f, f))
-            summ.append(f"{f} {np.mean(t['purity'][m] < PURE):.4f} (n = {int(m.sum())})")
+            summ.append(f"{f} {np.mean(bad[m]):.4f} (n = {int(m.sum())})")
         ax.set_yscale("log"); ax.set_ylim(1e-4, 1)
         if logx:
             ax.set_xscale("log"); ax.set_xlim(0.093, 200)
@@ -276,7 +292,7 @@ def fakes(args, plt, hep, labels, STY, PROC, PTE, LOG_LAB):
         ax.set_xlabel(xl); ax.set_ylabel("Fake rate")
         ax.legend(title=PROC[sample] + "\n" + txt + "\nconverged Genfit fits", loc="upper left", fontsize="x-small",
                   title_fontsize="x-small", alignment="left", frameon=False)
-        hep.label.exp_label(exp="CLD", text="Full Sim", data=True, loc=0, rlabel="fake: track purity < 75%", ax=ax)
+        hep.label.exp_label(exp="CLD", text="Full Sim", data=True, loc=0, rlabel="fake: not double-majority matched" if dm else "fake: track purity < 75%", ax=ax)
         fig.tight_layout(); fig.savefig(os.path.join(args.outdir, f"{name}.pdf")); plt.close(fig)
         print(f"wrote {name}.pdf | " + ", ".join(summ))
 
@@ -287,6 +303,8 @@ def main():
     r = sub.add_parser("run", help="per-particle efficiency arrays for one sample")
     r.add_argument("--inputs", nargs="+", required=True, help="canonical parquet chunks (globs ok)")
     r.add_argument("--ckpt", action="append", default=[], metavar="LABEL=PATH")
+    r.add_argument("--rescue", default="", metavar="K,P_HI,FLOOR",
+                   help="slot acceptance on hit evidence (model.TrackFormer.assign), e.g. 4,0.95,0.05")
     r.add_argument("--out", required=True)
     p = sub.add_parser("plot", help="the paper's figures from run outputs")
     p.add_argument("--npz", nargs="+", required=True, metavar="SAMPLE=NPZ",
@@ -294,6 +312,9 @@ def main():
     p.add_argument("--label", action="append", default=[], metavar="FINDER=LEGEND")
     p.add_argument("--fakes", default="", metavar="SAMPLE=FINDER=CANDS[,FINDER=CANDS...]",
                    help="fake rate from analyze_fitted.py candidate tables (with fit_pt, fit_theta)")
+    p.add_argument("--match", default="pure", choices=["pure", "dm"],
+                   help="pure: the paper's >= 75%% purity (default); dm: double majority (> 50%% purity AND "
+                        "> 50%% of the particle's hits), all other selections unchanged")
     p.add_argument("--outdir", default="cld_paper")
     a = ap.parse_args()
     (run if a.cmd == "run" else plot)(a)

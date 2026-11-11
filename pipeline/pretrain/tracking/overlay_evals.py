@@ -82,7 +82,8 @@ def sample_page(plt, labels, runs, sample, with_base, pt_min):
               ("_d", f"displaced (true $|d_0| > {d0_text(dmin)})")]
     for ax, (suf, title) in zip(axes, panels):
         ok = runs[0][f"gt_tot{suf}"] > 20
-        for lab, d, (c, st) in zip(labels, runs, STYLE):
+        for j, (lab, d) in enumerate(zip(labels, runs)):
+            c, st = STYLE[j % len(STYLE)]
             ax.plot(ctr[ok], (d[f"gt_m{suf}"] / np.maximum(d[f"gt_tot{suf}"], 1))[ok], st, color=c,
                     label=f"{lab} (fake {fake(d, 'm'):.3f})" if not suf else lab)
         if base is not None:
@@ -103,7 +104,8 @@ def summary_page(plt, labels, per_sample, with_base):
     samples = list(per_sample)
     x = np.arange(len(samples))
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
-    for j, (lab, (c, st)) in enumerate(zip(labels, STYLE)):
+    for j, lab in enumerate(labels):
+        c, st = STYLE[j % len(STYLE)]
         axes[0].plot(x, [eff(per_sample[s][j], "m") for s in samples], st, color=c, label=lab)
         axes[1].plot(x, [fake(per_sample[s][j], "m") for s in samples], st, color=c, label=lab)
     if with_base:

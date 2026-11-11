@@ -15,6 +15,7 @@
 #   -m N=CKPT   model name (used in collection names) and checkpoint; repeat
 #   -L N=LABEL  plot label of model N (default: N)
 #   -j JOBS     parallel fit processes (default 4)
+#   -r K,P,F    slot acceptance on hit evidence in step A (export_infer.py --rescue)
 #   -E          after the fits, run step E (analyze_fitted.py over all models, without the
 #               baseline curve; compare_fit_failures.py) into <work>/analysis/
 #   -B          step E also shows the Genfit-refitted baseline tracking
@@ -31,11 +32,11 @@ set -o pipefail
 G=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 TORCH_PY=${TORCH_PY:-python3}
 KEY4HEP_SETUP=${KEY4HEP_SETUP:-"source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh --spack -r 2026-10-04"}
-J=4; MODELS=(); LABELS=(); ANALYZE=0; WITH_BASE=0; RELEASE=0
-while getopts "d:w:f:m:L:j:EBR" o; do
+J=4; MODELS=(); LABELS=(); ANALYZE=0; WITH_BASE=0; RELEASE=0; RESCUE=()
+while getopts "d:w:f:m:L:j:r:EBR" o; do
   case $o in
     d) DET=$OPTARG ;; w) W=$OPTARG ;; f) LIST=$OPTARG ;; m) MODELS+=("$OPTARG") ;;
-    L) LABELS+=("$OPTARG") ;; j) J=$OPTARG ;; E) ANALYZE=1 ;; B) WITH_BASE=1 ;; R) RELEASE=1 ;;
+    L) LABELS+=("$OPTARG") ;; j) J=$OPTARG ;; r) RESCUE=(--rescue "$OPTARG") ;; E) ANALYZE=1 ;; B) WITH_BASE=1 ;; R) RELEASE=1 ;;
     *) sed -n 2,30p "$0"; exit 1 ;;
   esac
 done
@@ -52,7 +53,7 @@ label() { for l in "${LABELS[@]}"; do [ "${l%%=*}" = "$1" ] && { echo "${l#*=}";
 if [ "$STEP_A" = canonical ]; then AIN=$(awk '{print $2}' "$LIST"); else AIN=$(awk '{print $1}' "$LIST"); fi
 for m in "${MODELS[@]}"; do
   $TORCH_PY -u "$G"/export_infer.py --detector "$DET" --ckpt "${m#*=}" --files $AIN \
-      --outdir "$W/labels_${m%%=*}" >> "$W/logs/A_${m%%=*}.log" 2>&1 || { echo "step A failed for ${m%%=*}"; exit 1; }
+      --outdir "$W/labels_${m%%=*}" "${RESCUE[@]}" >> "$W/logs/A_${m%%=*}.log" 2>&1 || { echo "step A failed for ${m%%=*}"; exit 1; }
 done
 echo "$(date +%T) A done: ${#MODELS[@]} models x $(wc -l < "$LIST") files"
 

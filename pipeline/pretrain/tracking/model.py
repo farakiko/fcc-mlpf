@@ -103,13 +103,31 @@ class TrackFormer(nn.Module):
         return act, A, z, bg
 
     @torch.no_grad()
-    def assign(self, x, etaphi, thr=0.5):
+    def assign(self, x, etaphi, thr=0.5, rescue=None):
         """Per-hit track-slot id (-1 = background): a hit joins its highest-probability
         slot among the active ones (activity > thr) if that probability exceeds thr. The ONE
-        decision rule (in-training monitor, eval.py, genfit/export_infer.py)."""
+        decision rule (in-training monitor, eval.py, genfit/export_infer.py).
+        rescue = (K, P_HI, FLOOR): afterwards, a slot that is not active but has activity >
+        FLOOR and >= K still-unassigned hits with probability > P_HI is accepted too, and the
+        still-unassigned hits join their best accepted slot if that probability exceeds thr
+        (claimed hits never move). Real tracks whose slot activity is below thr although its
+        hits are confident are the dominant ML inefficiency on CLD (2026-11-11 study:
+        (4, 0.95, 0.05) recovers most of them)."""
         act, A, _, _ = self(x, etaphi)
-        P = torch.sigmoid(A); P[torch.sigmoid(act) <= thr] = 0.0
-        return np.where((P.max(0).values > thr).cpu().numpy(), P.argmax(0).cpu().numpy(), -1)
+        pa, P0 = torch.sigmoid(act), torch.sigmoid(A)
+        P = P0.clone(); P[pa <= thr] = 0.0
+        best = P.max(0)
+        lab = torch.where(best.values > thr, best.indices, torch.full_like(best.indices, -1))
+        if rescue is not None:
+            k, p_hi, floor = rescue
+            free = lab < 0
+            n_conf = (P0[:, free] > p_hi).sum(1) * ((pa <= thr) & (pa > floor))
+            acc = torch.nonzero(n_conf >= k).squeeze(1)
+            if len(acc) and free.any():
+                q = P0[acc][:, free].max(0)
+                idx = torch.nonzero(free).squeeze(1); ok = q.values > thr
+                lab[idx[ok]] = acc[q.indices[ok]]
+        return lab.cpu().numpy()
 
 
 def load_checkpoint(path, dev):

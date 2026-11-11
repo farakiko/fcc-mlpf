@@ -59,7 +59,10 @@ def main():
     ap.add_argument("--files", nargs="+", required=True)
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--thr", type=float, default=0.5)
+    ap.add_argument("--rescue", default="", metavar="K,P_HI,FLOOR",
+                    help="slot acceptance on hit evidence (model.TrackFormer.assign), e.g. 4,0.95,0.05")
     args = ap.parse_args()
+    rescue = tuple(float(v) for v in args.rescue.split(",")) if args.rescue else None
     os.makedirs(args.outdir, exist_ok=True)
     cfg = detectors.get(args.detector)
     want = ".parquet" if cfg["step_a_input"] == "canonical" else ".edm4hep.root"
@@ -79,7 +82,7 @@ def main():
         for i, e in evs:
             x, etaphi = featurize(e)
             pred = model.assign(torch.from_numpy(x).to(dev), torch.from_numpy(etaphi).to(dev),
-                                args.thr).astype(np.int32)
+                                args.thr, rescue).astype(np.int32)
             payload[f"pred_{i}"] = pred
             payload[f"role_{i}"] = np.asarray(e["thit_role"]).astype(np.int32)
             ntr += len(np.unique(pred[pred >= 0]))

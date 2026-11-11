@@ -132,7 +132,8 @@ Outputs: `fitted_eff_<tag>.pdf`, `fitted_res_<tag>.pdf` (own view), `fitted_comm
 (common view + absolute ROC), `fitted_<tag>.txt` (including a fit-failure table by candidate
 class and the signal efficiency at 1% mistag in the three views), and per chain
 `candidates_<tag>_<chain>.parquet` with one row per candidate (fit status, hit counts,
-purity, dominant-particle truth), the input of `fit_failure_study.py`.
+purity, dominant-particle truth, fitted pT and θ), the input of `compare_fit_failures.py` and
+of the CLD-paper fake rate (`../cld_paper.py`).
 
 ## Commissioning status
 
