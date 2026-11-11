@@ -5,7 +5,7 @@ spec for the portable-MLPF pipeline: [T] tracking, [C] clustering, [PF] particle
 
 Exits 0 only if ALL required collections are present, every relation target resolves to a
 stored collection, and the truth chains check out end-to-end. Use on every new delivery and
-as the last step of every production job.
+before using any new delivery.
 
 Usage:
   python audit_edm4hep.py FILE.root [FILE2.root ...] [--detector cld] [--quick]
@@ -64,8 +64,14 @@ IDEA_O2 = dict(
              "SiWrBCollection", "SiWrDCollection", "MuonSystemCollection"],
     calo_digi=["SCEPCal_digi_scint", "SCEPCal_digi_cheren", "DRBTScin_digi", "DRBTCher_digi",
                "DRETScinLeft_digi", "DRETScinRight_digi", "DRETCherLeft_digi", "DRETCherRight_digi"],
-    calo_link=["SCEPCal_CaloHitMCParticleLinks", "DRTube_CaloHitMCParticleLinks"],
+    # calo truth = digi -> sim-hit links + sim-hit contributions. TEMPORARY: the direct
+    # hit -> MCParticle links (SCEPCal_/DRTube_CaloHitMCParticleLinks) are not produced while
+    # CreateTruthLinks is removed from the production sequence (production/idea_o2/README.md,
+    # "Status"); require them again when it is restored.
+    calo_link=["SCEPCal_scint_link", "SCEPCal_cheren_link", "DRBTScin_link", "DRBTCher_link",
+               "DRETScinLeft_link", "DRETScinRight_link", "DRETCherLeft_link", "DRETCherRight_link"],
     calo_sim=["SCEPCal_MainEdep", "DRTubeEdep"],
+    calo_sim_contrib=["SCEPCal_MainEdepContributions", "DRTubeEdepContributions"],
     mc=["MCParticles", "_MCParticles_parents", "_MCParticles_daughters"],
     pf_base=["TracksFromGenParticles", "TracksFromGenParticlesAssociation"],
     # NOTE: TopoGrownClusters + EcalClusterMCParticleLinks (classical [C] baseline) are
@@ -115,6 +121,7 @@ def audit(fp, det, quick=False):
 
     # ---- 2. every relation target resolves ----
     print("-- relation resolution --")
+    n_fails = len(fails)
     for r in det["trk_rel"] + det.get("calo_link", []) + det.get("extra_links", []):
         if r not in stored:
             continue
@@ -128,7 +135,7 @@ def audit(fp, det, quick=False):
             if bad:
                 fails.append(f"{r} _{side} dangles -> {bad}")
                 print(f"  [FAIL] {r} {side} -> {bad} NOT STORED")
-    if not any("dangles" in x or "_from" in x or "_to" in x for x in fails):
+    if n_fails == len(fails):
         print("  [OK ] all relation collectionIDs resolve to stored collections")
 
     # ---- 3. tracker truth chain end-to-end + link fraction ----
@@ -163,8 +170,8 @@ def audit(fp, det, quick=False):
                 continue
             w = t[f"{L}/{L}.weight"].array(entry_stop=3)
             # a hit is (collectionID, index): indices restart in every calo collection
-            fro = np.asarray(ak.flatten(t[f"_{L}_from/_{L}_from.index"].array(entry_stop=1)), np.int64)
-            fcid = np.asarray(ak.flatten(t[f"_{L}_from/_{L}_from.collectionID"].array(entry_stop=1)), np.int64)
+            fro = np.asarray(ak.flatten(t[f"_{L}_from/_{L}_from.index"].array(entry_stop=3)), np.int64)
+            fcid = np.asarray(ak.flatten(t[f"_{L}_from/_{L}_from.collectionID"].array(entry_stop=3)), np.int64)
             u, c = np.unique(np.stack([fcid, fro], 1), axis=0, return_counts=True)
             print(f"  [OK ] {L}: {sum(len(x) for x in w)} links (3 ev), "
                   f"{100*(c>1).mean():.1f}% multi-link hits (fractional truth), "
@@ -172,7 +179,7 @@ def audit(fp, det, quick=False):
 
     # ---- 5. stats ----
     nh = sum(len(x) for x in t[f"{det['trk_digi'][0]}/{det['trk_digi'][0]}.cellID"].array(entry_stop=5))
-    print(f"-- stats (5 ev) -- VXD-b hits {nh}, "
+    print(f"-- stats (5 ev) -- {det['trk_digi'][0]} hits {nh}, "
           f"MCParticles/ev ~{int(np.mean([len(x) for x in t['MCParticles/MCParticles.PDG'].array(entry_stop=5)]))}")
     return fails
 

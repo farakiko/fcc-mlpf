@@ -16,7 +16,7 @@ Stat:showPartonLevel = off
 Beams:idA = 11                   ! first beam, e- = 11
 Beams:idB = -11                  ! second beam, e+ = -11
 
-! 4) Hard process : qq, at 365 GeV
+! 4) Hard process : Z/gamma* -> qq (u, d, s, c, b), at the Z pole
 Beams:eCM = 91.188               ! CM energy of collision
 WeakSingleBoson:ffbar2ffbar(s:gmZ) = on
 

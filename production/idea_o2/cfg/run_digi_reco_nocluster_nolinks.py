@@ -1,20 +1,15 @@
 # -----------------------------------------------------------------------------
-# -----------------------------------------------------------------------------
-# LOCAL VARIANT "nolinks" (fcc-mlpf, 2026-10-05): drops BOTH the classical ECAL
-# clustering (upstream infinite loop) AND the CreateTruthLinks algorithms
-# (>2.4 CPU-h/event over ~1.06M SCEPCal contribution records/event). All raw
-# ingredients for truth (digi->sim links, sim hits + contributions + particle refs)
-# remain in the output; hit->particle weights are derived offline in postprocessing.
-# Restore the originals when fixed upstream.
-# -----------------------------------------------------------------------------
-# LOCAL VARIANT (fcc-mlpf, 2026-10-05): run_digi_reco.py WITHOUT the classical ECAL
-# clustering. Reason: ClusterSeedGrower/TrackDrivenClusterSeeding enters an infinite
-# loop on empty cluster seeds ("openingAngleDist: zero-length vector", >1M errors,
-# 100% CPU hang) -- reported upstream. This variant keeps EVERYTHING the ML pipeline
-# needs: all tracker+calo digis, digi->sim links, hit->MCParticle links, truth tracks,
-# dN/dx. Dropped: TopoGrownClusters + EcalClusterMCParticleLinks (classical baseline;
-# re-enable via the original run_digi_reco.py once fixed upstream).
-# -----------------------------------------------------------------------------
+# LOCAL VARIANT (fcc-mlpf, 2026-10-05) of run_digi_reco.py, the production default while two
+# upstream problems are open (production/idea_o2/README.md, "Status"; evidence in bugreport/):
+#  1. classical ECAL clustering removed: ClusterSeedGrower/TrackDrivenClusterSeeding enters
+#     an infinite loop on empty cluster seeds ("openingAngleDist: zero-length vector").
+#     Dropped outputs: TopoGrownClusters, EcalClusterMCParticleLinks (the [C] baseline).
+#  2. CreateTruthLinks removed: > 2.4 CPU-h/event over ~1.06M SCEPCal contribution records
+#     per event. Dropped outputs: SCEPCal_/DRTube_CaloHitMCParticleLinks. The ingredients of
+#     the hit -> particle truth (digi -> sim links, sim hits with contributions and particle
+#     references) remain in the output; deriving the weights from them offline is planned
+#     (no postprocessing adapter for IDEA o2 exists yet).
+# Both removals are temporary: return to run_digi_reco.py when the upstream fixes land.
 # -----------------------------------------------------------------------------
 # Vendored from HEP-FCC/FCC-config (FCCee/FullSim/IDEA/IDEA_o2_v01), the official
 # IDEA o2 sim+digi+reco configuration (SCEPCal crystal ECAL + DR-tube HCAL, incl.
@@ -341,9 +336,8 @@ ApplicationMgr(
     + [
         # LOCAL VARIANT (nolinks): clustering removed (infinite-loop bug) AND
         # CreateTruthLinks removed (>2.4 CPU-h/event grinding ~1M contribution records;
-        # gdb-confirmed std::map hot loop). Truth links are built OFFLINE in the
-        # postprocessing adapter instead, vectorized from the digi->sim links + the
-        # sim-hit contributions (both present in the output via keep *).
+        # gdb-confirmed std::map hot loop). The truth links are to be derived offline
+        # from the digi->sim links + the sim-hit contributions (both kept via keep *).
     ],
     EvtSel="NONE",
     EvtMax=-1,

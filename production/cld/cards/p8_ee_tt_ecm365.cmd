@@ -11,13 +11,13 @@ Next:numberShowInfo = 1            ! print event information n times
 Next:numberShowProcess = 1         ! print process record n times
 Next:numberShowEvent = 0           ! print event record n times
 
-Beams:idA = 11                   ! first beam, e+ = 11
-Beams:idB = -11                   ! second beam, e- = -11
+Beams:idA = 11                   ! first beam, e- = 11
+Beams:idB = -11                   ! second beam, e+ = -11
 
 ! 3) Hard process : tt at 365 GeV
 Beams:eCM = 365  ! CM energy of collision
 Top:ffbar2ttbar(s:gmZ) = on
 
 ! 4) Settings for the event generation process in the Pythia8 library.
-PartonLevel:ISR = on               ! no initial-state radiation
-PartonLevel:FSR = on               ! no final-state radiation
+PartonLevel:ISR = on               ! initial-state radiation
+PartonLevel:FSR = on               ! final-state radiation

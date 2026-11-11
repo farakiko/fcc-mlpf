@@ -48,10 +48,10 @@ HIT_FIELDS = (
     "wire_stereo",           # DCH: wireStereoAngle [rad]          (planar: 0)
     "wire_azimuthal",        # DCH: wireAzimuthalAngle [rad]       (planar: 0)
     "hit_EDep_err",          # eDepError (both types)
-    "hit_du",                # planar (TrackerHit3D): sqrt(cov_xx)  (DCH: 0)
-    "hit_dv",                # planar: sqrt(cov_yy)                 (DCH: 0)
-    "hit_dw",                # planar: sqrt(cov_zz)                 (DCH: 0)
-    "hit_role",              # CANONICAL role id (postprocessing_schema.md): 0 vtx-barrel,
+    "hit_du",                # planar: TrackerHitPlane du (TrackerHit3D: sqrt(cov_xx))  (DCH: 0)
+    "hit_dv",                # planar: TrackerHitPlane dv (TrackerHit3D: sqrt(cov_yy))  (DCH: 0)
+    "hit_dw",                # planar: 0 for TrackerHitPlane (TrackerHit3D: sqrt(cov_zz)) (DCH: 0)
+    "hit_role",              # CANONICAL role id (postprocessing/README.md): 0 vtx-barrel,
                              #   1 vtx-endcap/disk, 6 drift chamber, 7 siwrapper-barrel,
                              #   8 siwrapper-disk  (2-5 reserved: CLD inner/outer tracker)
 )
@@ -253,7 +253,7 @@ def _planar_uncertainties(digi_hit):
 
 
 def extract_planar_hits(event, values, hit_mc_indices):
-    # LOCAL MODIFICATION (fcc-mlpf): role ids per data-contract convention
+    # LOCAL MODIFICATION (fcc-mlpf): canonical role ids (postprocessing/README.md)
     PLANAR_ROLE = {"VTXBSimDigiLinks": 0, "VTXDSimDigiLinks": 1,
                    "SiWrBSimDigiLinks": 7, "SiWrDSimDigiLinks": 8}
     for collection_name in PLANAR_ASSOCIATIONS:

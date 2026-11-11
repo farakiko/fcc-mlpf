@@ -6,7 +6,6 @@
 # 2026-10-01; local modifications are marked. See production/idea/README.md.
 # -----------------------------------------------------------------------------
 
-import datetime
 import os
 import glob
 import argparse
@@ -43,12 +42,13 @@ def main(base_path):
     parser.add_argument("--maxseed", help="maximum seed", default=1)
     parser.add_argument("--type", help="train or test", default="train")
     parser.add_argument("--detector", help="IDEA or CLD", default="IDEA")
+    # LOCAL MODIFICATION (fcc-mlpf): the nightly must be pinned explicitly (nightlies are
+    # garbage-collected; record the date you used). No --mainDir: base_path is discovered.
     parser.add_argument(
         "--key4hep_version",
-        help="Key4hep version to use",
-        default="2026-07-29",
+        help="Key4hep nightly to use, e.g. 2026-10-04",
+        required=True,
     )
-    parser.add_argument("--mainDir", help="main directory", default="")
 
     parsed_args = parser.parse_args()
 
@@ -57,14 +57,12 @@ def main(base_path):
     outdir = os.path.abspath(parsed_args.outdir)
     os.makedirs(outdir, exist_ok=True)
 
-    mainDir = parsed_args.mainDir
-
     njobs = int(parsed_args.maxseed) - int(parsed_args.minseed) + 1
     minseed = int(parsed_args.minseed)
     train_or_val = parsed_args.type
     key4hep_version = parsed_args.key4hep_version
 
-    script = f"{mainDir}/src/runSequence.sh"
+    script = f"{base_path}/src/runSequence.sh"
 
     arguments_list = []
 

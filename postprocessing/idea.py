@@ -6,7 +6,7 @@ Requires the fcc-mlpf-enriched columns (drift errors, wire angles, du/dv/dw, hit
 part_charge, part_sim_status) -- files from the unmodified upstream converter are rejected.
 
 Usage:  python idea.py Graphs_X.parquet out_canonical.parquet \
-            [--detector IDEA_o1_v4] [--b-tesla 2.0] [--stack "nightlies-2026-09-13"]
+            [--detector IDEA_o1_v4] [--b-tesla 2.0] [--stack sw-nightlies-2026-09-13]
 """
 import argparse
 import os
@@ -16,7 +16,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from schema import write_events, THIT, MC, SCHEMA_VERSION
+from schema import write_events, SCHEMA_VERSION
 
 REQUIRED_ENRICHED = ["drift_dist_err", "pos_along_wire_err", "wire_stereo", "wire_azimuthal",
                      "hit_EDep_err", "hit_du", "hit_dv", "hit_dw", "hit_role",

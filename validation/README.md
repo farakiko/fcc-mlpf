@@ -1,121 +1,126 @@
-# validation — the executable data specification
+# validation — the data specification
 
-**What this does:** defines which EDM4hep collections a production must contain
-(the specification below) and enforces it with one command:
+This directory defines which EDM4hep collections a production must contain for the pipeline
+to use it, and checks a file against that definition with one command:
 
 ```bash
-python audit_edm4hep.py --detector <cld|idea> FILE.edm4hep.root [...]
-# "VERDICT: PASS" + exit 0  →  the file serves all pipeline stages it claims to
+python audit_edm4hep.py --detector <cld|idea|idea_o2> FILE.edm4hep.root [...]
 ```
 
-Run it on **every** delivery — your own condor output, a colleague's dataset, a new
-detector's first file. It checks presence, that every relation resolves to a stored
-collection, that the digi→sim→MCParticle truth chain works end-to-end, and the calo
-fractional-truth links. To support a new detector, add a collection map at the top of
-`audit_edm4hep.py` (role-based: same groups, that detector's names).
+The audit exits with code 0 and prints `VERDICT: PASS` when every required collection is
+present. For each file it checks, in order:
 
----
+1. that every required collection and MC-particle branch is stored (`--quick` stops here);
+2. that every relation points to a collection stored in the file;
+3. that the truth chain of the tracker works end to end (digitized hit → simulated hit →
+   MC particle) for more than 95% of the tracker hits of the first five events;
+4. for detectors with calorimeter truth, it reports the number of hit-to-truth links and the
+   fraction of hits shared between several particles (informational, never a failure).
 
-# Data specification — EDM4hep collections required by the pipeline
+The audit should run on every delivery: our own HTCondor output, a colleague's dataset, the
+first file of a new detector. The specification below is written with the CLD collection
+names; the audit holds one collection map per detector (`CLD`, `IDEA`, `IDEA_O2` at the top
+of `audit_edm4hep.py`) that fills the same roles with that detector's names. For the
+simulated calorimeter hits it requires a minimum set (barrel collections and one
+contributions collection), not the full list.
 
-> **This is the authoritative list.** Every production (any detector) must satisfy it; every
-> delivery is checked with `validation/audit_edm4hep.py` (which implements exactly this spec
-> and exits non-zero on any gap). Collection names below are CLD's; for another detector the
-> *roles* must map (see §5). Verified against the reference production of 2026-09-29
-> (CLD_o2_v08, key4hep 2026-04-08; 495 files × 10 ttbar events).
+## A naming convention to know
 
-## 0. Naming convention warning (learned the hard way)
+podio stores the relation and vector members of a collection as separate branches whose
+names start with an underscore: the hits of a track are in `_SiTracks_Refitted_trackerHits`
+(with `.index` and `.collectionID`), its states in `_SiTracks_Refitted_trackStates`, the hits
+of a cluster in `_PandoraClusters_hits`. Older files exposed some of these without the
+underscore. A check written against the historical spelling reports collections as missing
+that are present.
 
-podio encodes **relation/vector members as separate branches with a leading underscore**:
-e.g. a track's hit list is `_SiTracks_Refitted_trackerHits` (with `.index`/`.collectionID`),
-its states `_SiTracks_Refitted_trackStates`, a cluster's hits `_PandoraClusters_hits`.
-Older files exposed some of these without the underscore. **Audits must match canonical
-member names, not historical spellings** — we once mis-declared `trackStates` and
-`PandoraClusters_hits` "missing" on exactly this.
+## Stage [T]: track finding
 
-## 1. Stage [T] — ML track finding (hits → tracks)
-
-| collection | type | why |
+| collection | type | role |
 |---|---|---|
-| `VXDTrackerHits`, `VXDEndcapTrackerHits`, `ITrackerHits`, `ITrackerEndcapHits`, `OTrackerHits`, `OTrackerEndcapHits` | TrackerHitPlane | **model input**: digitized hits (position, eDep, du/dv, time, cov) — all six, incl. endcaps |
-| `VXDTrackerHitRelations`, `VXDEndcapTrackerHitRelations`, `InnerTrackerBarrelHitsRelations`, `InnerTrackerEndcapHitsRelations`, `OuterTrackerBarrelHitsRelations`, `OuterTrackerEndcapHitsRelations` | LCRelation[digi→sim] | **truth chain, step 1**: digitized hit → sim hit |
-| `VertexBarrelCollection`, `VertexEndcapCollection`, `InnerTrackerBarrelCollection`, `InnerTrackerEndcapCollection`, `OuterTrackerBarrelCollection`, `OuterTrackerEndcapCollection` | SimTrackerHit | **truth chain, step 2**: sim hit → `MCParticle` (the label). *These were dropped in pre-2026-09 productions — the single most important thing to keep.* |
-| `SiTracks_Refitted` (+ `_trackerHits`, `_trackStates`), `SiTracksMCTruthLink` | Track, links | **baseline finder** for the head-to-head (hit sets, fitted states, track→MC) |
+| `VXDTrackerHits`, `VXDEndcapTrackerHits`, `ITrackerHits`, `ITrackerEndcapHits`, `OTrackerHits`, `OTrackerEndcapHits` | TrackerHitPlane | model input: digitized hits (position, energy deposit, du/dv, time), all six including the endcaps |
+| `VXDTrackerHitRelations`, `VXDEndcapTrackerHitRelations`, `InnerTrackerBarrelHitsRelations`, `InnerTrackerEndcapHitsRelations`, `OuterTrackerBarrelHitsRelations`, `OuterTrackerEndcapHitsRelations` | relation, digitized → simulated | truth chain, first step |
+| `VertexBarrelCollection`, `VertexEndcapCollection`, `InnerTrackerBarrelCollection`, `InnerTrackerEndcapCollection`, `OuterTrackerBarrelCollection`, `OuterTrackerEndcapCollection` | SimTrackerHit | truth chain, second step: simulated hit → MC particle, the training label |
+| `SiTracks_Refitted` (with `_trackerHits`, `_trackStates`), `SiTracksMCTruthLink` | Track, link | classical baseline: hit sets, fitted states, track → MC particle |
 
-## 2. Stage [C] — ML calo clustering (hits → showers)
+The simulated tracker hits are the collections most at risk: productions before 2026-09
+dropped them, which made those samples unusable for training.
 
-| collection | type | why |
+## Stage [C]: calorimeter clustering
+
+| collection | type | role |
 |---|---|---|
-| `ECALBarrel`, `ECALEndcap`, `HCALBarrel`, `HCALEndcap`, `HCALOther`, `MUON` | CalorimeterHit | **model input**: digitized calo + muon hits |
-| `CalohitMCTruthLink` | link w/ weight | **truth**: hit → MCParticle; weights split the calibrated hit energy among the contributing particles; multi-link hits (0.5% of hits, 1.5% of the energy in tt̄ @ 365 GeV) = the **fractional energy-sharing** labels |
-| `ECalBarrelCollection`, `ECalEndcapCollection`, `HCalBarrelCollection`, `HCalEndcapCollection`, `HCalRingCollection`*, `YokeBarrelCollection`*, `YokeEndcapCollection`* (+ each `...Contributions`) | SimCalorimeterHit | **full MC energy decomposition** per cell (sub-hit contributions) — ground truth for fractional assignment beyond the link weights. *Names with * as present in the detector model.* |
-| `PandoraClusters` (+ `_PandoraClusters_hits`) | Cluster | **baseline clustering** — hit-level double-majority comparison needs the hit relation |
+| `ECALBarrel`, `ECALEndcap`, `HCALBarrel`, `HCALEndcap`, `HCALOther`, `MUON` | CalorimeterHit | model input: digitized calorimeter and muon-system hits |
+| `CalohitMCTruthLink` | link with weight | truth: hit → MC particle. The weights split the calibrated hit energy among the contributing particles; 0.5% of the hits (1.5% of the energy) in tt̄ at 365 GeV are shared, which defines the fractional labels |
+| `ECalBarrelCollection`, `ECalEndcapCollection`, `HCalBarrelCollection`, `HCalEndcapCollection`, `HCalRingCollection`, `YokeBarrelCollection`, `YokeEndcapCollection`, each with its `…Contributions` | SimCalorimeterHit | the MC energy decomposition per cell, below the level of the link weights |
+| `PandoraClusters` (with `_PandoraClusters_hits`) | Cluster | classical baseline; the comparison is hit-based and needs the hit relation |
 
-## 3. Stage [PF] — particle-flow head (tracks + showers → particles)
+## Stage [PF]: particle flow
 
-| collection | type | why |
+| collection | type | role |
 |---|---|---|
-| `MCParticles` with **full tree**: `parents`/`daughters` refs, `vertex`, `endpoint`, `momentum`, `momentumAtEndpoint`, `generatorStatus`, `simulatorStatus`, `charge`, `mass`, `PDG` | MCParticle | targets: calo-entrance particle construction, primary/secondary split, status-1 truth, neutrinos for MET |
-| `PandoraPFOs` (+ refs), `RecoMCTruthLink` | ReconstructedParticle | **baseline PF** for physics benchmarks (jets, MET, per-class eff/fake) |
-| everything in §1 + §2 | | the PF head consumes both stages |
+| `MCParticles` with the full tree: `parents`, `daughters`, `vertex`, `endpoint`, `momentum`, `momentumAtEndpoint`, `generatorStatus`, `simulatorStatus`, `charge`, `mass`, `PDG` | MCParticle | targets: particles at the calorimeter entrance, primary and secondary particles, neutrinos for the missing momentum |
+| `PandoraPFOs` (with its references), `RecoMCTruthLink` | ReconstructedParticle | classical baseline for the physics benchmarks (jets, missing momentum, efficiency and fake rate per class) |
 
-## 4. Bookkeeping (required)
+[PF] also consumes everything required by [T] and [C].
 
-- `podio_metadata` intact (collection-ID table — the audit resolves every relation's
-  `collectionID` against it; **every referenced ID must be a stored collection**, no dangling).
-- Production provenance recorded alongside the files: key4hep release, CLDConfig version/source,
-  geometry compact file + its origin, generator card, seed scheme. (Our production scripts
-  write this; see `production/cld/README.md`.)
+## Bookkeeping
 
-## 5. Porting to another detector (ALLEGRO / ILD / IDEA / CLD variants)
+- `podio_metadata` must be intact: the audit resolves the `collectionID` of every relation
+  through it, and every referenced collection must be stored.
+- The production provenance is recorded next to the files: key4hep release, geometry,
+  generator card and seed (the `.provenance.txt` files written by the production scripts,
+  `production/README.md`).
 
-The spec is role-based: (tracker digi hits + digi→sim relations + sim hits), (calo digi hits +
-hit→MC links + sim calo w/ contributions), (full MCParticle tree), (native baselines where they
-exist). A new detector satisfies the spec when each role is filled by its corresponding
-collections — names differ, the audit script takes a per-detector collection map
-(see `validation/audit_edm4hep.py --detector`). Drift-chamber (IDEA) and dual-readout calo
-hits fill the same roles with modality-specific payloads (see the mlpf repo's
-`trackml_data_contract.md` for the downstream schema).
+## Other detectors
 
-**IDEA (implemented 2026-10-01, `--detector idea`)** — tracking-only digi set from
-A. De Vita's production (chain + collection map + version pins: `production/idea/README.md`):
-digi `DCH_DigiCollection`/`VTXB(D)Digis`/`SiWrB(D)Digis` → links
-`DCH_DigiSimAssociationCollection`/`*SimDigiLinks` → sim `DCHCollection`/`Vertex*`/`SiWr*`
-(each with `_particle` → MCParticles). Existing dataset: 999 files × 500 Z→qq̄ events @ 91 GeV
-(`/eos/experiment/fcc/ee/simulation/key4hep_2026_09_10/91GeV/IDEA_o1_v4/fixedDataset/`),
-audited PASS, 100% DCH truth linking, ~3.6k tracker hits/event. No calo groups, no baseline
-tracks (pre-reconstruction) — the audit skips those groups for detectors without them.
+The specification is defined by roles: tracker digitized hits with their links to simulated
+hits; calorimeter digitized hits with their truth links and the simulated hits with
+contributions; the full MC particle tree; and the classical baselines where they exist. A new
+detector satisfies it when each role is filled by its own collections. Drift-chamber and
+dual-readout calorimeter hits fill the same roles with their own measurement content; the
+canonical schema that holds them is described in
+[`postprocessing/README.md`](../postprocessing/README.md).
 
-## 6. Known pitfalls (from the CLD forensics, 2026-09/10)
+- **IDEA o1** (`--detector idea`): the tracking-only digitized sample of A. De Vita
+  (`production/idea/README.md`). It has no calorimeter and no reconstructed tracks; the
+  audit skips those groups. The existing dataset passes, with every drift-chamber hit linked
+  to its MC particle.
+- **IDEA o2** (`--detector idea_o2`): tracker, muon system and dual-readout calorimeter
+  (`production/idea_o2/README.md`). While the production omits the classical ECAL clustering
+  and the direct calorimeter hit-to-particle links, the audit requires the digitized-to-
+  simulated links and the simulated hits with contributions instead; both requirements are
+  marked as temporary in `audit_edm4hep.py`.
 
-1. **Dropped sim collections**: default output-slimming kills the truth chain (pre-2026-09
-   files). Keep `keep *` or an explicit list containing §1-§3.
-2. **`Geant4TVUserParticleHandler` crash**: CLDConfig's `cld_steer.py` requires a tracking
-   volume. CLD_o2_v08 (k4geo main) defines it via `<parallelworld_volume
-   name="tracking_volume">`; older compacts (≤v06 in the released k4geo) define neither this
-   nor the legacy `tracking_region_*` constants → **ddsim exits 1 at init**. Use v08+ (or
-   patch constants in). NB: with the handler active, MCParticles are pruned (~600/ev vs ~820
-   without) — a *physical* difference in stored secondaries; do not mix handler-on and
-   handler-off samples in one training set.
-3. **Release skew**: the 2026-04-08 stack ships an older CLDConfig (defaults to v07, no
-   `--compactFile`) and a mislabeled "v08" geometry dir. Hence we **vendor** CLDConfig and the
-   geometry in this repo (`production/cld/`) and pin the stack — the three versions are
-   decoupled on cvmfs and must not be assumed consistent.
+## Known pitfalls
 
-## 7. Slimming policy: produce FULL (`keep *`); slim only in derived caches
+1. **Dropped simulated collections.** The default output slimming removes the truth chain,
+   as happened in the productions before 2026-09. Keep `keep *`, or an explicit list that
+   contains everything above.
+2. **ddsim stops at initialization.** CLDConfig's `cld_steer.py` requires a tracking volume.
+   CLD_o2_v08 (k4geo main) defines it through `<parallelworld_volume name="tracking_volume">`;
+   older compact files (up to v06 in the released k4geo) define neither this nor the legacy
+   `tracking_region_*` constants, and ddsim exits with code 1. With the handler active, the
+   stored MC particles are pruned (about 600 per tt̄ event against about 820 without it), so
+   samples with and without the handler must not be mixed.
+3. **Version skew.** The 2026-04-08 stack ships an older CLDConfig (default geometry v07, no
+   `--compactFile`) and a "v08" geometry directory with v07 content. We therefore vendor
+   CLDConfig and the geometry (`production/cld/`) and pin the stack: the three are versioned
+   independently on cvmfs.
 
-Decided 2026-10-01, on measurement (reference file, 10 events, 34 MB compressed):
-**96% of the bytes are spec-needed** — sim-calo `*Contributions` alone are 56% (and they ARE
-the fractional clustering truth), then calo hits, sim tracker hits, MCParticles. The genuinely
-unused high-level reco (vertex/jet collections, `SiTracks`/`SiTracksCT` duplicates, LumiCal,
-dQdx, …) totals **~4%**.
+## Slimming policy: produce everything, slim only derived files
 
-Therefore production stays at stock `keep *`:
-- savings ≈ 4% vs the maintenance cost of a curated keep-list per CLDConfig version;
-- production-time slimming is irreversible and is precisely what broke the pre-2026-09
-  samples (pitfall #1) — this repo exists because of that mistake;
-- several "unused" collections have anticipated uses (`BuildUpVertices_V0` → conversion
-  finding for e/γ origin; `dQdx` → PID; `SiTracksCT` → tracking comparisons);
-- the correct slimming layer is the **derived training cache** (ROOT → compact tensors,
-  ~100× smaller, fully reproducible from ROOT). If storage ever binds at large event counts:
-  produce full → build caches → archive/thin ROOT. Never slim at the source.
+Measured on a reference file (10 events, 34 MB compressed, 2026-10-01), 96% of the bytes are
+needed by the specification. The simulated calorimeter contributions alone are 56%, and they
+are the fractional clustering truth; calorimeter hits, simulated tracker hits and MC particles
+follow. The high-level reconstruction we do not use (vertices, jets, duplicate track
+collections, LumiCal, dQ/dx) is about 4%. Production therefore keeps `keep *`:
+
+- the saving would be about 4%, against the cost of maintaining a keep-list per CLDConfig
+  version;
+- slimming at production time is irreversible, and it is what made the pre-2026-09 samples
+  unusable;
+- several unused collections have foreseeable uses (`BuildUpVertices_V0` for conversion
+  finding, `dQdx` for particle identification, `SiTracksCT` for tracking comparisons);
+- the right place to slim is the derived training cache, which is about 100 times smaller and
+  can be rebuilt from the ROOT files at any time. If storage becomes the limit: produce the
+  full files, build the caches, then archive or thin the ROOT files.

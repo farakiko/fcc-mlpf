@@ -17,8 +17,9 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown arg $1"; exit 1;;
   esac
 done
-TMP=$(mktemp --suffix=.parquet 2>/dev/null || mktemp -t graphXXXX.parquet)
-trap 'rm -f "$TMP" "$TMP.tmp"' EXIT
+TMPD=$(mktemp -d)                  # a directory keeps the .parquet suffix portable (GNU/BSD)
+TMP="$TMPD/graph.parquet"
+trap 'rm -rf "$TMPD"' EXIT
 python "$HERE/../production/idea/src/process_tree.py" "$IN" "$TMP" --file-number 0 $MAXEV
 python "$HERE/idea.py" "$TMP" "$OUT" --stack "$STACK"
 python "$HERE/schema.py" "$OUT"

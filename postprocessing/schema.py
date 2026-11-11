@@ -80,6 +80,8 @@ def _best_codec():
 
 def write_events(path, events, meta, row_group_size=25):
     """events: list of per-event dicts {column: 1d array}; meta: dict with META_KEYS."""
+    if not events:
+        raise ValueError(f"{path}: no events to write")
     missing = [k for k in META_KEYS if k not in meta]
     if missing:
         raise ValueError(f"metadata missing keys: {missing}")

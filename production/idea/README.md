@@ -1,77 +1,81 @@
-# IDEA production & feature extraction
+# IDEA o1 production and feature extraction
 
-> **Provenance:** this directory is vendored from **Andrea De Vita's**
-> `MLBased-FCC-TrackFinder-training` repo (`data_creation/condor_pipeline/IDEA/
-> noBackground_parquet`, v4 chain) — the production behind the IDEA GGTF datasets.
-> Each file carries an acknowledgment header; local modifications are marked inline.
-> Upstream also has: a `loopers` submission variant, the IDEA v3 chain, and a
-> background-overlay chain (WIP) — not vendored, see his repo.
+This directory is vendored from A. De Vita's `MLBased-FCC-TrackFinder-training`
+repository (`data_creation/condor_pipeline/IDEA/noBackground_parquet`, the v4 chain), the
+production behind the IDEA datasets of his track-finding studies. Each file carries an
+acknowledgment header, and our local modifications are marked inline. The upstream
+repository also contains a looper-enriched submission, the IDEA v3 chain and a
+background-overlay chain, which are not vendored here.
 
 ## The chain
 
 ```
-k4run pythia.py (cards/Zcard.cmd, Z→qq̄ @ 91 GeV, seed/job)
-  → ddsim  (IDEA_o1_v04 compact from $K4GEO + utils/SteeringFile_IDEA_o1_v04.py)
-  → k4run utils/runIDEA_v4o1_trackerDigitizer.py        → digi .root   (EDM4hep)
-  → python src/process_tree.py                          → graph .parquet (training features)
+k4run pythia.py (cards/Zcard.cmd: Z/γ* → uū, dd̄, ss̄ at 91 GeV, one seed per job)
+  → ddsim (IDEA_o1_v04 from $K4GEO, utils/SteeringFile_IDEA_o1_v04.py)
+  → k4run utils/runIDEA_v4o1_trackerDigitizer.py   → digi ROOT file (EDM4hep)
+  → python src/process_tree.py                     → graph parquet (per-hit features and labels)
 ```
-Driver: `src/runSequence.sh` (one seed = one 500-event job), submission `src/submit_jobs.py`
-(HTCondor, resubmission-safe: only the final `.parquet` counts as complete).
 
-## Existing dataset (no need to regenerate for [T] bring-up)
+`src/runSequence.sh` runs the chain for one seed (500 events by default, `NEV` overrides it),
+and `src/submit_jobs.py` submits one HTCondor job per missing seed, so that a resubmission
+only reruns the jobs whose final parquet file is absent:
+
+```bash
+cd production/idea
+python src/submit_jobs.py --outdir <EOS dir> --minseed 1 --maxseed 100 --type train \
+    --key4hep_version 2026-10-04 --queue longlunch
+```
+
+The key4hep nightly must be given explicitly; nightly builds are removed from cvmfs after a
+few weeks, so the date used belongs in the provenance of the sample. The existing dataset
+was produced with the nightly of 2026-09-10, which is no longer available.
+
+The generator smears the primary vertex with the FCC-ee beam spot (σx = 5.96 µm,
+σy = 23.8 nm, σz = 0.397 mm), unlike the CLD samples, which have no smearing.
+
+The train and test samples are simulated with different particle handling in ddsim. The
+train sample uses the default handler with `--part.minimalKineticEnergy "0.00*MeV"`; the test
+sample disables the user handler and keeps all particles
+(`--part.userParticleHandler='' --part.keepAllParticles true`). The stored MC particles
+therefore differ between the two, and the two samples should not be mixed.
+
+## The existing dataset
 
 `/eos/experiment/fcc/ee/simulation/key4hep_2026_09_10/91GeV/IDEA_o1_v4/fixedDataset/`
-— `Zuds/digi/`: **999 files × 500 events** (~430 MB/file, 404 GB), + `Zuds_validation/`.
-Audited 2026-10-01 (`validation/audit_edm4hep.py --detector idea`): all digi + link + sim
-collections present, **100% DCH truth linking**, ~3.6k tracker hits/event
-(~3.4k drift chamber + ~190 Si) — ~4× CLD-ttbar occupancy.
+holds 999 files of 500 events in `Zuds/digi/` (about 430 MB per file, 404 GB in total), and a
+validation sample in `Zuds_validation/`. The audit (`validation/audit_edm4hep.py --detector
+idea`, 2026-10-01) finds every digitized, link and simulated collection present, every
+drift-chamber hit linked to its MC particle, and about 3,600 tracker hits per event
+(3,400 in the drift chamber, 190 in silicon), about four times the occupancy of CLD tt̄.
+Our [T] training data are the first 150 files of `Zuds/digi/`, converted with
+`postprocessing/idea_digi_to_parquet.sh`.
 
-## IDEA collection map (digi → sim-link → sim, each sim has `_particle` → MCParticles)
+## Collections
 
-| digi | link | sim |
+Each digitized collection links to its simulated hits, and each simulated hit to its MC
+particle (`_particle`).
+
+| digitized | link | simulated |
 |---|---|---|
-| `DCH_DigiCollection` (SenseWire: wire position + stereo/azimuthal angles, `distanceToWire`±err, position-along-wire err, eDep, time, `nElectrons` cluster counts) | `DCH_DigiSimAssociationCollection` | `DCHCollection` |
-| `VTXBDigis` / `VTXDDigis` (TrackerHitPlane) | `VTXBSimDigiLinks` / `VTXDSimDigiLinks` | `VertexBarrelCollection` / `VertexEndcapCollection` |
-| `SiWrBDigis` / `SiWrDDigis` (Si wrapper) | `SiWrBSimDigiLinks` / `SiWrDSimDigiLinks` | `SiWrBCollection` / `SiWrDCollection` |
+| `DCH_DigiCollection` (wire position, stereo and azimuthal angles, distance to the wire and its error, error along the wire, energy deposit, time, cluster count) | `DCH_DigiSimAssociationCollection` | `DCHCollection` |
+| `VTXBDigis`, `VTXDDigis` (TrackerHitPlane) | `VTXBSimDigiLinks`, `VTXDSimDigiLinks` | `VertexBarrelCollection`, `VertexEndcapCollection` |
+| `SiWrBDigis`, `SiWrDDigis` (silicon wrapper) | `SiWrBSimDigiLinks`, `SiWrDSimDigiLinks` | `SiWrBCollection`, `SiWrDCollection` |
 
-Also stored: `MCParticles` (full tree), sim-only `MuonSystemCollection`,
-`PreshowerSystemCollection`. **No calo** and **no baseline track collection** — this is a
-tracking-only digi set: `SteeringFile_IDEA_o1_v04.py` sets **`simulateCalo = False`** (the
-dual-readout calorimeter was never simulated, not merely dropped), and no reconstruction ran.
-⇒ **supports stage [T] only.** A [C]/[PF]-complete IDEA production requires:
-(1) re-sim with **`simulateCalo = True`** — NOTE: the vendored steering already contains the
-    full DR setup behind this flag (`DRCaloSDAction`, SiPM SDs, optical-photon physics, and
-    the `Geant4DRCFiberModel` fiber fast-sim), so the simulation side is a one-flag change;
-    cost per event to be measured (10-event timing test) before any campaign;
-(2) a **DR-calo digitization + hit→MC links** step — NOT in the upstream repo; key4hep
-    component maturity to check with Andrea (first [C] bring-up could even use sim-level
-    calo hits, which carry MC contributions directly);
-(3) accepting there is no Pandora-style PF baseline for IDEA.
-Per the roadmap this is the M7 stretch; CLD carries [C]/[PF] development meanwhile.
+The files also store the full MC particle tree and the simulated hits of the muon system and
+the preshower. They contain no calorimeter collections and no reconstructed tracks: the
+steering file sets `simulateCalo = False`, so the dual-readout calorimeter is not simulated,
+and no reconstruction runs. This sample therefore serves stage [T] only, and IDEA has no
+classical tracking baseline in our files. The IDEA o2 chain in [`../idea_o2/`](../idea_o2/README.md)
+simulates the calorimeter.
 
-## Feature extraction (the modality adapter)
+## Feature extraction
 
-`src/process_tree.py` + `src/tools_tree.py`:
-- `drift_ambiguity_positions()` — converts each sense-wire measurement into the **left/right
-  candidate 3D positions** (the drift-circle ambiguity made explicit) — Andrea's wire→point
-  conversion that GGTF trains on.
-- `extract_planar_hits()` — VTX/SiWr TrackerHitPlane features.
-- `extract_particles()` + per-hit MC indices — the truth labels.
-Output: parquet with 25-event row groups (zstd), `file_number` column for the graph builder.
-
-**For fcc-mlpf**: this parquet is the starting point for the `[T]` IDEA adapter. Open design
-choice (to settle with Andrea): train on L/R candidate pairs (his representation) vs raw wire
-features (endpoints + drift distance) with the ambiguity left to the model — our data contract
-(`mlpf` repo, `trackml_data_contract.md`) sketches the latter; his `process_tree.py` gives the
-former today.
-
-## Version pins (differ from CLD production — do not mix blindly)
-
-- Stack: **nightlies** `source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh --spack -r <ver>`
-  (dataset produced with `2026-09-10`), vs CLD's stable `2026-04-08`.
-- ddsim particle handling **differs between his train and test samples**:
-  train = default handler + `--part.minimalKineticEnergy "0.00*MeV"`;
-  test = `--part.userParticleHandler=''` + `--part.keepAllParticles true`.
-  ⇒ MCParticle content differs between the two splits; keep splits separate and document
-  which convention any new production uses (cf. the CLD handler-on/off warning,
-  `validation/README.md` §6.2).
+`src/process_tree.py` converts a digi file into one parquet row per event. For every
+drift-chamber hit it computes the two candidate crossing points on either side of the wire
+(`drift_ambiguity_positions`, the left/right ambiguity of a drift measurement made
+explicit), the representation that De Vita's models train on; for the silicon hits it
+extracts the planar measurement (`extract_planar_hits`); and it records the MC particle of
+every hit as the truth label. Our local modifications add the measurement uncertainties, the
+wire angles and a detector-global role per hit. The canonical training schema keeps both the
+raw wire measurement and the two candidate points, and the [T] features use both
+(`postprocessing/README.md`, `pipeline/pretrain/tracking/README.md`).

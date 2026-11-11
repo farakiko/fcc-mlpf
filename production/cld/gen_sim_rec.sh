@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # CLD production job: Pythia -> ddsim -> CLDReconstruction -> EOS, satisfying validation/README.md.
-# Adapted (parameterized) from B. Dudar's gen_sim_rec.sh (reference copy kept alongside).
+# Adapted (parameterized) from B. Dudar's gen_sim_rec.sh (verbatim copy in the initial git commit).
 #
 # Usage:   ./gen_sim_rec.sh <job_id> <n_events>
 # Config:  via environment (defaults below) -- set STAGING_DIR and OUTPUT_DIR before condor use.
@@ -9,6 +9,8 @@
 #   K4H_RELEASE : pinned key4hep release (DO NOT float to nightlies for production)
 #   GEOMETRY    : compact XML, relative to STAGING_DIR
 #   CARD        : pythia card, relative to STAGING_DIR
+#   SEED_BASE   : seed of process 0 (seed = SEED_BASE + process index), or "random" for a
+#                 smoke test; see campaigns/CAMPAIGNS.md before choosing a block
 set -e
 t1=$(date +%s)
 
@@ -16,8 +18,8 @@ if [[ $# -ne 2 ]]; then echo "Usage: $0 <job_id> <n_events>"; exit 1; fi
 job_id=$1
 n_events=$2
 
-: "${STAGING_DIR:?set STAGING_DIR (e.g. /eos/user/f/fmokhtar/fcc-mlpf/production/cld)}"
-: "${OUTPUT_DIR:?set OUTPUT_DIR (e.g. /eos/user/f/fmokhtar/fcc-mlpf/data/cld_tt)}"
+: "${STAGING_DIR:?set STAGING_DIR (e.g. /eos/user/<u>/<you>/fcc-mlpf/production/cld)}"
+: "${OUTPUT_DIR:?set OUTPUT_DIR (e.g. /eos/user/<u>/<you>/cld_smoke)}"
 K4H_RELEASE=${K4H_RELEASE:-2026-04-08}
 GEOMETRY=${GEOMETRY:-CLD_o2_v08/CLD_o2_v08.xml}
 CARD=${CARD:-cards/p8_ee_tt_ecm365.cmd}
@@ -38,15 +40,15 @@ xrdcp -s  "${STAGING_DIR}/pythia.py" .
 xrdcp -sr "${STAGING_DIR}/$(dirname ${GEOMETRY})" .
 xrdcp -sr "${STAGING_DIR}/CLDConfig" .
 
-# per-job seed. DETERMINISTIC when SEED_BASE is set (campaign policy, see
-# campaigns/CAMPAIGNS.md: seed = SEED_BASE + process index -> contiguous auditable block;
-# verify disjointness against campaigns/*.seeds.txt BEFORE submitting). Falls back to the
-# legacy random scheme if SEED_BASE is unset.
-if [ -n "${SEED_BASE:-}" ]; then
+# Per-job seed: seed = SEED_BASE + process index, so a campaign occupies one contiguous block
+# that can be checked against campaigns/*.seeds.txt before submission (CAMPAIGNS.md). A
+# random seed must be asked for explicitly (SEED_BASE=random, smoke tests only).
+: "${SEED_BASE:?set SEED_BASE (campaigns/CAMPAIGNS.md) or SEED_BASE=random for a smoke test}"
+if [ "${SEED_BASE}" = random ]; then
+  seed=$((1 + (0x$(openssl rand -hex 4) % 900000000)))
+else
   proc=${job_id##*.}                          # job_id = Cluster.Process
   seed=$((SEED_BASE + proc))
-else
-  seed=$((1 + (0x$(openssl rand -hex 4) % 900000000)))
 fi
 sed -i "s/^Random:seed.*/Random:seed = ${seed}/" card.cmd
 echo "pythia seed=${seed}"

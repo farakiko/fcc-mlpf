@@ -9,7 +9,7 @@ sorted list") carries over to the parquet chunks.
 CLD example (anywhere with python+uproot+awkward+pyarrow):
   python batch_convert.py --adapter cld \
       --inputs "/eos/experiment/fcc/ee/simulation/key4hep_2026_04_08/365GeV/CLD_o2_v08/rec/ttbar_mlpf/*.edm4hep.root" \
-      --outdir /eos/user/f/fmokhtar/fcc-mlpf/derived/cld_tt_parquet \
+      --outdir <derived>/cld_ttbar \
       --files-per-chunk 20 --nproc 8 --stack key4hep-2026-04-08
 
 IDEA o1 (needs a key4hep env for podio; uses the digi->canonical wrapper per file,
@@ -74,6 +74,8 @@ def main():
     ap.add_argument("--job-index", type=int, default=0)
     ap.add_argument("--num-jobs", type=int, default=1)
     args = ap.parse_args()
+    if args.adapter == "idea" and (args.detector or args.stages != "T"):
+        sys.exit("--detector and --stages apply to the cld adapter only")
 
     files = sorted(glob.glob(args.inputs))
     if args.max_files:

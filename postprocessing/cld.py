@@ -16,7 +16,6 @@ import os
 import sys
 
 import numpy as np
-import awkward as ak
 import uproot
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -70,7 +69,7 @@ def produced_in_calo(vx, vy, vz, face=CALO_FACE):
 
 def calo_mother(parent, vx, vy, vz, simstatus, face=CALO_FACE):
     """Per MC particle, the row of its calorimeter mother: HitPF's truth object, "the MC
-    particle at the entrance of the calorimeter" (development repo,
+    particle at the entrance of the calorimeter" (HitPF code of Garcia et al.,
     data_generation/preprocessing/utils.py::correct_link). Walk up the first-parent chain
     while the particle was produced inside the calorimeter, except that a particle flagged
     backscattered and not decayed in the tracker stops the walk (an object of its own)."""
@@ -285,8 +284,7 @@ def main():
         events += read_file(fp, stages=args.stages)
         print(f"  {os.path.basename(fp)}: cum {len(events)} events", flush=True)
     meta = dict(schema_version=SCHEMA_VERSION, detector=args.detector, B_tesla=args.b_tesla,
-                stack=args.stack, source=f"cld.py<-{len(args.inputs)} files",
-                stages=",".join(args.stages))
+                stack=args.stack, source=f"cld.py<-{len(args.inputs)} files")
     n = write_events(args.output, events, meta)
     print(f"wrote {args.output}: {n} events, stages {','.join(args.stages)}"
           + (f", {sum(len(e['thit_x']) for e in events)} tracker hits" if "T" in args.stages else "")
