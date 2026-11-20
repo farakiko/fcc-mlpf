@@ -119,6 +119,24 @@ mean something else in the ML literature.
 - For [C] status, report the main configuration against Pandora and the nearest-neighbour floor
   only, in one short table.
 
+## Code style
+
+`ruff.toml` and `.pre-commit-config.yaml` enforce formatting and lint (`production/` is vendored
+and excluded); run `ruff format` and `ruff check` before staging. The rest no tool checks:
+
+- Simple: as few lines as possible; no unused options, speculative flags or single-use helpers.
+- `snake_case`, verbose explicit names (`get_mc_with_highest_weight_track()`, not
+  `getHighWTrkMc()`); no single-letter names outside trivial loop indices.
+- No nested calls, not even `f(g(x))`: one call per line with named intermediates. Exceptions:
+  trivial builtins (`len`, `int`, `range`), type conversions (`torch.from_numpy(...)`),
+  constructor configs (`nn.Sequential(nn.Linear(...))`); method chains are fine.
+- Long argument lists, in any language: one argument per line, indented; in bash, whenever a
+  command has more than three arguments.
+- Comments only to explain why; docstrings only where name and signature are not enough, one or
+  two lines.
+- f-strings only, never `%` or `.format()`.
+- One term per concept, in code and documentation alike.
+
 ## Writing style for documentation
 
 READMEs and docs follow the user's papers (e.g. arXiv:2606.14373):
