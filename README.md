@@ -123,4 +123,12 @@ The IDEA production and the drift-chamber feature extraction are adapted from A.
 CLD production is adapted from B. Dudar's setup; CLDConfig and the CLD_o2_v08 geometry are
 vendored from Key4hep and k4geo. The IDEA o2 configuration is vendored from HEP-FCC/FCC-config.
 The model design follows HEPTv2 (arXiv:2606.20437), and the [C] definitions follow HitPF
-(arXiv:2603.04084).
+(arXiv:2603.04084). The particle-flow model is M. D. Garcia's Mask3D model from the mlpf
+repository, parts of which derive from S. Van Stroud's hepattn.
+
+## Licence
+
+fcc-mlpf is distributed under the GNU General Public License, version 3 (`LICENSE`). We chose
+it because several modules of the particle-flow model (`pipeline/pretrain/mlpf/mask3d/`) derive
+from hepattn (github.com/samvanstroud/hepattn), which is released under the same licence. The
+configurations vendored in `production/` keep the licences of their origin.
