@@ -64,7 +64,7 @@ Measured on the reference production (2026-09-29, 495 jobs of 10 tt̄ events):
 | quantity | value |
 |---|---|
 | run time per 10-event job | about 8 min, dominated by the full simulation (`microcentury` flavour) |
-| output size | about 3.3 MB per event, including the simulated calorimeter contributions (the fractional energy truth of [C]) |
+| output size | about 3.3 MB per event, including the simulated calorimeter contributions (the fractional energy truth of [HitPF]) |
 | 100,000 events | 10,000 jobs, about 340 GB |
 
 ## Smoke test without HTCondor
@@ -95,7 +95,7 @@ contribution (the fraction of u quarks is 0.28 at every energy, the Z couplings;
 would rise towards 0.67 away from the pole), with no b or c quarks and no beam-spot
 smearing. The files keep the simulated tracker hits but not the simulated calorimeter hits;
 the calorimeter truth links, which carry the same fractional information, are present
-(`pipeline/pretrain/clustering/DESIGN.md`).
+(`postprocessing/README.md`, calorimeter group).
 
 ## Adapting to a new detector or a CLD variant
 

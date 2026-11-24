@@ -6,7 +6,7 @@ transformer encoder over the tracker hits of an event followed by a decoder of l
 track candidate. The model is detector-blind: it reads the canonical parquet files of
 [`postprocessing/`](../../../postprocessing/README.md), and it can be trained on one detector
 or on several detectors in the same run. The candidates are then fitted by Genfit2
-([`genfit/`](genfit/README.md)); the fitted parameters, not the raw candidates, are what [PF]
+([`genfit/`](genfit/README.md)); the fitted parameters, not the raw candidates, are what [HitPF]
 consumes.
 
 | file | content |

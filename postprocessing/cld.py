@@ -9,7 +9,7 @@ Usage:  python cld.py REC1.edm4hep.root [REC2...] out_canonical.parquet \
 --stages selects the column groups (postprocessing/README.md): T = tracker hits + baseline
 tracks (stage [T]); C = calorimeter and muon-system hits, their fractional truth links,
 Pandora cluster membership, and per MC particle its calorimeter mother (HitPF's truth
-object, see calo_mother()) (stage [C]). Default T; T,C serves both stages and [PF].
+object, see calo_mother()) (stage [HitPF]). Default T; T,C serves both stages.
 """
 import argparse
 import os
@@ -277,7 +277,7 @@ def main():
     ap.add_argument("--stack", default="key4hep-2026-04-08")
     ap.add_argument("--stages", default="T", type=parse_stages,
                     help="column groups to write, comma-separated: T (tracker, [T]), C "
-                         "(calorimeter, [C]); e.g. T,C. The MC block is always written.")
+                         "(calorimeter, [HitPF]); e.g. T,C. The MC block is always written.")
     args = ap.parse_args()
     events = []
     for fp in args.inputs:

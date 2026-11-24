@@ -9,9 +9,9 @@ usable by the pipeline if and only if it passes the collection audit of
 
 | detector | chain | stages served | guide |
 |---|---|---|---|
-| CLD | Pythia8 → ddsim (CLD_o2_v08) → CLDReconstruction (conformal tracking, Pandora) | [T], [C], [PF] | [`cld/`](cld/README.md) |
+| CLD | Pythia8 → ddsim (CLD_o2_v08) → CLDReconstruction (conformal tracking, Pandora) | [T], [HitPF] | [`cld/`](cld/README.md) |
 | IDEA o1 | Pythia8 → ddsim (IDEA_o1_v04, calorimeter not simulated) → tracker digitization | [T] | [`idea/`](idea/README.md) |
-| IDEA o2 | Pythia8 → ddsim (IDEA_o2_v01, with the dual-readout calorimeter) → digitization and reconstruction | [T], [C] (planned) | [`idea_o2/`](idea_o2/README.md) |
+| IDEA o2 | Pythia8 → ddsim (IDEA_o2_v01, with the dual-readout calorimeter) → digitization and reconstruction | [T], [HitPF] (planned) | [`idea_o2/`](idea_o2/README.md) |
 
 The CLD chain produced the CLD tt̄ sample; the CLD samples at other collision energies were
 produced externally and are described in [`cld/README.md`](cld/README.md). The IDEA o1

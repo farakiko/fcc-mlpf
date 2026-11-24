@@ -1,11 +1,11 @@
 #!/bin/bash
-# [PF] end to end for one CLD sample: the [T] tracks fitted with Genfit2 (steps A-C of
-# ../tracking/genfit/run_chain.sh, then step D), the [PF] shard cache (data.py) and the training
+# [HitPF] end to end for one CLD sample: the [T] tracks fitted with Genfit2 (steps A-C of
+# ../tracking/genfit/run_chain.sh, then step D), the [HitPF] shard cache (data.py) and the training
 # (train.py). Every stage skips what exists, so the script can be rerun after an interruption or
 # run stage by stage: the chain and the cache need CPUs only, the training a GPU.
 #
 # The fit writes a full copy of every event next to the fitted tracks (about 3 MB per tt̄ event),
-# while [PF] needs only the per-track table of step D (about 7 kB per event). The chain therefore
+# while [HitPF] needs only the per-track table of step D (about 7 kB per event). The chain therefore
 # runs in batches of -b files: fit a batch, extract its track tables, delete its fitted files.
 # What stays per source file is its step-A labels and its track table; a file that has a track
 # table is never fitted again. -k keeps the fitted files (for the fitted-level analysis, step E).

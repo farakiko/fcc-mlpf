@@ -7,9 +7,9 @@ pitfalls. Humans start from `README.md`. Measured results are not kept here: the
 
 ## The project
 
-Machine-learned event reconstruction shared across detector concepts for FCC-ee. Three
-stages, trained one after another: [T] track finding, [C] calorimeter clustering, [PF]
-particle flow, with Genfit2 fitting the [T] candidates between [T] and [PF]. The models are
+Machine-learned event reconstruction shared across detector concepts for FCC-ee. Two
+stages, trained one after another: [T] track finding and [HitPF] particle flow from hits (the
+calorimeter hits and the fitted tracks), with Genfit2 fitting the [T] candidates between them. The models are
 pretrained on a mixed-detector corpus (CLD and IDEA today) and are meant to be adapted to a
 new detector (ALLEGRO, a CLD variant) with a small fine-tuning sample.
 
@@ -28,12 +28,12 @@ mean something else in the ML literature.
 
 - **Track fitting is Genfit2 only** (2026-10-13): the k4RecTracker `GenfitTrackFitter`
   (Kalman/DAF, material and field from DD4hep, finder-agnostic) runs as a batch `k4run` pass
-  between the frozen [T] model and [PF]. The in-loop helix fit and its learned calibration were
+  between the frozen [T] model and [HitPF]. The in-loop helix fit and its learned calibration were
   removed on 2026-10-15; never reintroduce a fitter-free pT anywhere, not even as a plot axis
   (user: "dangerous because misleading"). Why: `docs/results.md`, "Why the fit is Genfit".
 - **One set of definitions per stage**: `pipeline/pretrain/tracking/metrics.py` (truth
   selection, double-majority matching, truth perigee, prompt/displaced thresholds, truth origin,
-  IDEA convention) and `pipeline/pretrain/clustering/metrics.py` (HitPF matching), imported by
+  IDEA convention) and `pipeline/pretrain/mlpf/metrics.py` (HitPF matching), imported by
   training, evaluation and the fitted-level analysis. Double majority everywhere in [T],
   including the resolution sample (2026-10-15). Converged fit = χ² ≥ 0, ndf > 0, AtIP state
   (failed fits are written with χ² = ndf = −1, not dropped).
@@ -47,7 +47,7 @@ mean something else in the ML literature.
   maps, the postprocessing adapter, and `genfit/detectors.py` (collections, hit provenance,
   geometry, field, wire-tracker name, baseline collection). Every Genfit step takes
   `--detector`; the hit-provenance rule is documented in `genfit/README.md`.
-- **Model**: TrackFormer (HEPTv2-style, arXiv:2606.20437), transformer encoder (full
+- **[T] model**: TrackFormer (HEPTv2-style, arXiv:2606.20437), transformer encoder (full
   attention; `--attn lsh` as fallback) and slot decoder, d = 128, 1.4M parameters; losses:
   Hungarian-matched focal and Dice, slot activity, background, InfoNCE. 34 detector-blind
   features per hit, no detector token: identity only through the modality flag and the
@@ -67,9 +67,13 @@ mean something else in the ML literature.
   definitions by default.
 - **IDEA convention**: the IDEA efficiency always counts particles with ≥ 3 hits in the
   denominator (A. De Vita, 2026-11-10); never quote the every-particle efficiency (about 0.12).
-- **[C] follows HitPF** (2026-10-26) for truth objects, labels, matching and metrics, and lists
-  every deviation (`pipeline/pretrain/clustering/DESIGN.md`). [C] recipe: lr 3e-5, 2,000-event
-  warmup, fp32 (the `train.py` defaults since 2026-11-11).
+- **[HitPF] replaces calorimeter clustering and particle flow** (2026-11-24): one model, M. D.
+  Garcia's Mask3D (a transformer encoder and a query decoder, not TrackFormer), clusters the
+  calorimeter hits and the fitted tracks into particles. The separate clustering stage [C] was
+  removed; its code and studies are in the git history (last present in 3a8b7d6).
+- **[HitPF] follows HitPF** (arXiv:2603.04084) for truth objects, labels, matching and metrics
+  (`pipeline/pretrain/mlpf/metrics.py`); track truth is double majority, as in [T]. Recipe:
+  lr 3e-5, 2,000-event warmup, fp32 (the `train.py` defaults).
 - **First version of any training on CLD tt̄**, later versions add samples; every version is
   evaluated on every sample separately (2026-10-29).
 - **Curve names** (2026-11-11): "Conformal tracking", "ML tracking (CLD-only training)", "ML
@@ -87,16 +91,17 @@ mean something else in the ML literature.
 ## Roadmap (user, 2026-10-13; updated 2026-11-11)
 
 1. Genfit-only refactor: done. Remaining: output slimming (`outputCommands`) and a batch
-   wrapper for the full-corpus pass; merging step D into the canonical files as the [PF] track
-   input.
+   wrapper for the full-corpus pass; merging step D into the canonical files as the [HitPF]
+   track input, with the source file and event number per event, so that [HitPF] reads the
+   canonical files instead of EDM4hep.
 2. Fine-tuning curve on IDEA: efficiency versus the number of IDEA training events, from the
    CLD model and from scratch (in progress; small-N runs use `--train-events`, `--repeat`).
    Coordinate with A. De Vita on an IDEA-only training; do not duplicate his.
 3. Scale the mixed [T] corpus (the remaining IDEA chunks; `--attn lsh` at scale first).
-4. [C] on CLD tt̄ (in progress), then mixed [C] against single-detector [C] and Pandora. IDEA
-   [C] data depend on the IDEA o2 production and its offline truth links (with S. H. Ko).
-5. [PF], consuming the cached Genfit track parameters and the [C] clusters. Final test:
-   ALLEGRO, left out of training and reached by fine-tuning.
+4. [HitPF] on CLD tt̄ (first training 2026-11-19): evaluation against Pandora, then particle
+   type and energy, then mixed-detector training. IDEA [HitPF] data depend on the IDEA o2
+   production and its offline truth links (with S. H. Ko). Final test: ALLEGRO, left out of
+   training and reached by fine-tuning.
 
 ## Working rules (user)
 
@@ -116,8 +121,7 @@ mean something else in the ML literature.
 - Classical baselines stay in the production outputs. Removing one to work around an upstream
   bug is temporary and must be reverted when fixed (IDEA o2 clustering and truth links).
 - `plots/`, `runs/` and `testdata/` are not tracked.
-- For [C] status, report the main configuration against Pandora and the nearest-neighbour floor
-  only, in one short table.
+- For [HitPF] status, report the main configuration against Pandora only, in one short table.
 
 ## Writing style for documentation
 
@@ -152,9 +156,9 @@ READMEs and docs follow the user's papers (e.g. arXiv:2606.14373):
   (`export_infer.py`, `write_mltracks.py`, `run_genfit.py`, `states_to_parquet.py`,
   `analyze_fitted.py`), `run_chain.sh` (A-C, optionally E, over many files and models),
   `plot_physics.py`, `summarize_samples.py`, `compare_fit_failures.py`.
-- `pipeline/pretrain/clustering/` ([C]): `DESIGN.md`, `STUDIES.md`, `data.py`, `model.py`,
-  `metrics.py`, `train.py`, `eval.py`, `plot_hitpf.py`, `plot_truth.py`, `plot_training.py`.
-- `pipeline/pretrain/mlpf/`, `pipeline/finetune/`: planned.
+- `pipeline/pretrain/mlpf/` ([HitPF]): `data.py`, `model.py`, `metrics.py`, `train.py`,
+  `run_pf.sh`, `mask3d/` (ported from mlpf; parts derive from hepattn, GPL-3.0).
+- `pipeline/finetune/`: planned.
 - `docs/acat2027_abstract.md` (the target), `docs/results.md` (the results log).
 - Pinned stacks: CLD production = key4hep 2026-04-08; IDEA and Genfit = nightly 2026-10-04
   (`--spack -r`). Nightlies are removed from cvmfs after weeks; re-pin deliberately and record

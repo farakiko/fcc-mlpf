@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Audit an EDM4hep production file against validation/README.md (the authoritative collection
-spec for the portable-MLPF pipeline: [T] tracking, [C] clustering, [PF] particle flow).
+spec for the portable-MLPF pipeline: [T] tracking, [HitPF] particle flow from hits).
 
 Exits 0 only if ALL required collections are present, every relation target resolves to a
 stored collection, and the truth chains check out end-to-end. Use on every new delivery and
@@ -32,13 +32,13 @@ CLD = dict(
              "OuterTrackerBarrelCollection", "OuterTrackerEndcapCollection"],
     trk_base=["SiTracks_Refitted", "_SiTracks_Refitted_trackerHits",
               "_SiTracks_Refitted_trackStates", "SiTracksMCTruthLink"],
-    # [C]
+    # [HitPF]: calorimeter hits, their truth, Pandora's clusters
     calo_digi=["ECALBarrel", "ECALEndcap", "HCALBarrel", "HCALEndcap", "HCALOther", "MUON"],
     calo_link=["CalohitMCTruthLink"],
     calo_sim=["ECalBarrelCollection", "HCalBarrelCollection"],          # minimum; more is fine
     calo_sim_contrib=["ECalBarrelCollectionContributions"],
     calo_base=["PandoraClusters", "_PandoraClusters_hits"],
-    # [PF]
+    # [HitPF]: the MC tree, Pandora's particles
     mc=["MCParticles", "_MCParticles_parents", "_MCParticles_daughters"],
     pf_base=["PandoraPFOs", "RecoMCTruthLink"],
     # links beyond trk_rel/calo_link whose from/to must resolve
@@ -55,7 +55,7 @@ IDEA = dict(
              "SiWrBCollection", "SiWrDCollection"],
     mc=["MCParticles", "_MCParticles_parents", "_MCParticles_daughters"],
 )
-# IDEA o2 (SCEPCal + DR HCAL; production/idea_o2): ONE file serves [T]+[C]+[PF]-prep.
+# IDEA o2 (SCEPCal + DR HCAL; production/idea_o2): ONE file serves [T] and [HitPF].
 IDEA_O2 = dict(
     trk_digi=["DCHDigis", "VTXBDigis", "VTXDDigis", "SiWrBDigis", "SiWrDDigis", "MSTrackerHits"],
     trk_rel=["DCHDigisSimAssociationCollection", "VTXBSimDigiLinks", "VTXDSimDigiLinks",
@@ -74,7 +74,7 @@ IDEA_O2 = dict(
     calo_sim_contrib=["SCEPCal_MainEdepContributions", "DRTubeEdepContributions"],
     mc=["MCParticles", "_MCParticles_parents", "_MCParticles_daughters"],
     pf_base=["TracksFromGenParticles", "TracksFromGenParticlesAssociation"],
-    # NOTE: TopoGrownClusters + EcalClusterMCParticleLinks (classical [C] baseline) are
+    # NOTE: TopoGrownClusters + EcalClusterMCParticleLinks (classical ECAL clustering baseline) are
     # TEMPORARILY not required: upstream clustering hang (see production/idea_o2/bugreport/).
     # Move them back into pf_base once the fix lands and production re-enables clustering.
 )

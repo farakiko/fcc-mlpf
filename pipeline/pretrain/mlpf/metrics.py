@@ -1,7 +1,8 @@
 """
-Shared [C] evaluation definitions, used by the in-training monitor (train.py) and, for the
-matching, by eval.py, whose inclusive numbers follow the same definitions. They follow HitPF
-(arXiv:2603.04084; its match_showers):
+[HitPF] evaluation definitions, for the comparison of the model's particles with the truth
+objects and with Pandora; every evaluation of the stage is to import them. They follow HitPF
+(arXiv:2603.04084; its match_showers), and they are the definitions of the calorimeter-clustering
+stage that [HitPF] replaced (git history before its removal on 2026-11-24):
 
   iou_match   a reconstructed cluster and a truth object are paired by a one-to-one Hungarian
               assignment on the intersection-over-union of their hit sets (hit counts);
@@ -10,10 +11,9 @@ matching, by eval.py, whose inclusive numbers follow the same definitions. They 
               energy, per class)
   fake rate   fraction of reconstructed clusters (hit-energy sum >= 0.1 GeV) without a match;
               fake energy = fraction of the energy of those clusters in unmatched ones. The
-              0.1 GeV cluster threshold mirrors the object one (and eval.py's binning).
+              0.1 GeV cluster threshold mirrors the object one (and the E_EDGES binning).
 
-hitpf_eff / hitpf_fakes reproduce HitPF's figures (its bins, uncertainties and PDG classes),
-for plot_hitpf.py.
+hitpf_eff / hitpf_fakes reproduce HitPF's figures (its bins, uncertainties and PDG classes).
 """
 import numpy as np
 from scipy.optimize import linear_sum_assignment

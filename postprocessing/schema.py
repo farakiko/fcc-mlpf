@@ -41,8 +41,8 @@ THIT = ["thit_x", "thit_y", "thit_z", "thit_role", "thit_modality",
 MC = ["mc_pdg", "mc_charge", "mc_px", "mc_py", "mc_pz", "mc_e", "mc_m",
       "mc_vx", "mc_vy", "mc_vz", "mc_genstatus", "mc_simstatus", "mc_parent"]
 BASE = ["bhit_track", "btrack_mc"]              # optional group (detectors with a baseline)
-# optional calorimeter group (stage [C]): per-hit columns, per-link fractional truth, and the
-# per-MC-particle calorimeter mother (the [C] truth object of every MC particle)
+# optional calorimeter group (stage [HitPF]): per-hit columns, per-link fractional truth, and the
+# per-MC-particle calorimeter mother (the [HitPF] truth object of every MC particle)
 CHIT = ["chit_x", "chit_y", "chit_z", "chit_e", "chit_time", "chit_role", "chit_modality",
         "chit_layer", "chit_mc", "chit_pandora"]
 CLINK = ["clink_hit", "clink_mc", "clink_frac"]
