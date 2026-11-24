@@ -13,7 +13,7 @@ production/<det>  →  EDM4hep ROOT  ──(adapter: cld.py, idea.py)──►  
 A canonical file has one row per event and jagged columns: tracker hits with their truth
 labels (`thit_*`), the MC particle block (`mc_*`), the hit labels of the classical track
 finder where the detector has one (`b*`), and optionally the calorimeter group (`chit_*`,
-`clink_*`) for stage [C]. The file metadata records the detector, the magnetic field, the
+`clink_*`) for stage [HitPF]. The file metadata records the detector, the magnetic field, the
 software stack and the schema version. A file for which `python schema.py file.parquet`
 prints `[OK] schema-compliant` can be used for training, whichever detector produced it.
 
@@ -21,7 +21,7 @@ prints `[OK] schema-compliant` can be used for training, whichever detector prod
 
 ```bash
 # CLD: reads REC files directly (uproot, awkward, pyarrow; no key4hep). --stages selects the
-# column groups: T (tracker, stage [T]), C (calorimeter, stage [C]); T,C serves both and [PF]
+# column groups: T (tracker, stage [T]), C (calorimeter, stage [HitPF]); T,C serves both
 python cld.py REC1.edm4hep.root [REC2 ...] out.parquet --detector CLD_o2_v08 \
     --stack key4hep-2026-04-08 --stages T,C
 
@@ -135,7 +135,7 @@ same source hold the same events, chunk by chunk.
 
 ### Calorimeter group (`chit_*`, `clink_*`, `mc_calomother`; stage C)
 
-This is the input and truth of stage [C] (`pipeline/pretrain/clustering/DESIGN.md`).
+This is the calorimeter input and truth of stage [HitPF] (`pipeline/pretrain/mlpf/README.md`).
 Calorimeter and muon-system hits share one row index.
 
 | column | per | definition |
@@ -147,7 +147,7 @@ Calorimeter and muon-system hits share one row index.
 | `chit_mc` | hit | row of the MC particle with the largest energy fraction of the hit (−1 = no truth link) |
 | `chit_pandora` | hit | baseline: index of the Pandora cluster that holds the hit (−1 = none) |
 | `clink_hit`, `clink_mc`, `clink_frac` | link | fractional truth: hit row, MC row, and the particle's fraction of the hit energy (summing to 1 per linked hit) |
-| `mc_calomother` | MC particle | row of the particle's calorimeter mother, the [C] truth object (HitPF): the walk goes up the parents while the production vertex lies inside the calorimeter; a backscattered particle not decayed in the tracker is its own mother |
+| `mc_calomother` | MC particle | row of the particle's calorimeter mother, the [HitPF] truth object (HitPF): the walk goes up the parents while the production vertex lies inside the calorimeter; a backscattered particle not decayed in the tracker is its own mother |
 
 The truth object of a hit is `mc_calomother[chit_mc]`. The calorimeter-face geometry used by
 the walk is a property of the detector and lives in the adapter.

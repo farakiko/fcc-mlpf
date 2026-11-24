@@ -45,7 +45,7 @@ that are present.
 The simulated tracker hits are the collections most at risk: productions before 2026-09
 dropped them, which made those samples unusable for training.
 
-## Stage [C]: calorimeter clustering
+## Stage [HitPF]: calorimeter hits
 
 | collection | type | role |
 |---|---|---|
@@ -54,14 +54,14 @@ dropped them, which made those samples unusable for training.
 | `ECalBarrelCollection`, `ECalEndcapCollection`, `HCalBarrelCollection`, `HCalEndcapCollection`, `HCalRingCollection`, `YokeBarrelCollection`, `YokeEndcapCollection`, each with its `…Contributions` | SimCalorimeterHit | the MC energy decomposition per cell, below the level of the link weights |
 | `PandoraClusters` (with `_PandoraClusters_hits`) | Cluster | classical baseline; the comparison is hit-based and needs the hit relation |
 
-## Stage [PF]: particle flow
+## Stage [HitPF]: particles and baselines
 
 | collection | type | role |
 |---|---|---|
 | `MCParticles` with the full tree: `parents`, `daughters`, `vertex`, `endpoint`, `momentum`, `momentumAtEndpoint`, `generatorStatus`, `simulatorStatus`, `charge`, `mass`, `PDG` | MCParticle | targets: particles at the calorimeter entrance, primary and secondary particles, neutrinos for the missing momentum |
 | `PandoraPFOs` (with its references), `RecoMCTruthLink` | ReconstructedParticle | classical baseline for the physics benchmarks (jets, missing momentum, efficiency and fake rate per class) |
 
-[PF] also consumes everything required by [T] and [C].
+[HitPF] also consumes everything required by [T], whose fitted tracks are its track input.
 
 ## Bookkeeping
 

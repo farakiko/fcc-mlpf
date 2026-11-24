@@ -241,10 +241,21 @@ calibration did not change this. The d0-significance ROC favoured the Kalman fit
 60% displaced efficiency at 1% mistag). The helix fit was removed on 2026-10-15; the study is in
 the git history.
 
-## [C] calorimeter clustering
+## [C] calorimeter clustering (removed 2026-11-24)
 
-The design, the training studies and the reference numbers of Pandora and of the
-nearest-neighbour floor are in `pipeline/pretrain/clustering/DESIGN.md` and `STUDIES.md`.
-The adopted fp32 recipe reached, at epoch 5 and on 1,000 held-out events, an efficiency of
-0.861 at a fake rate of 0.061 in tt̄, against 0.867 at 0.034 for Pandora, which uses tracks
-(2026-11-03).
+A separate clustering stage, the [T] encoder and slot decoder on the calorimeter hits without
+tracks, reached at epoch 5 and on 1,000 held-out events an efficiency of 0.861 at a fake rate of
+0.061 in tt̄, against 0.867 at 0.034 for Pandora, which uses tracks (2026-11-03, fp32 recipe,
+HitPF matching). The stage was removed on 2026-11-24, when [HitPF] took over the clustering
+together with the particle flow. Its design, studies and the reference numbers of Pandora and
+of the nearest-neighbour floor (`pipeline/pretrain/clustering/DESIGN.md` and `STUDIES.md`)
+are in the git history, last present in commit 3a8b7d6.
+
+## [HitPF] particle flow from hits
+
+The Mask3D particle-flow model of M. D. Garcia, without invariant point attention, was merged
+on 2026-11-24 (`pipeline/pretrain/mlpf/`). Its first training used 2,000 CLD tt̄ events at
+365 GeV with the Genfit-fitted tracks of a [T] model: 12 epochs on two GPUs, held-out loss
+from 4.67 to 3.70 (2026-11-19). That training used the simple-majority track truth and the [T]
+slot acceptance without rescue, both since replaced; there is no evaluation against Pandora
+yet.

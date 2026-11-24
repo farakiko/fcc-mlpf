@@ -14,18 +14,19 @@ The target of the current work is stated in
 
 ## Approach
 
-The reconstruction runs in three stages, trained one after another:
+The reconstruction runs in two stages, trained one after another:
 
 - **[T] track finding**: tracker hits → track candidates;
-- **[C] calorimeter clustering**: calorimeter and muon-system hits → one cluster per particle
-  entering the calorimeter;
-- **[PF] particle flow**: fitted tracks and clusters → reconstructed particles.
+- **[HitPF] particle flow from hits**: calorimeter and muon-system hits and the fitted tracks →
+  reconstructed particles.
 
-All stages share one architecture, a transformer encoder over the detector hits followed by a
-decoder of learned slots, each slot reconstructing one object (following HEPTv2,
-arXiv:2606.20437). Between [T] and [PF], the track candidates are fitted with Genfit2, the
-detector-generic Kalman filter of Key4hep, which takes the material and the magnetic field
-from the detector description. The models never see a detector name. Every hit is described
+Both stages are transformers whose learned queries each reconstruct one object: [T] is
+TrackFormer, an encoder over the tracker hits followed by a slot decoder (following HEPTv2,
+arXiv:2606.20437), and [HitPF] is the Mask3D particle-flow model of M. D. Garcia, an encoder
+over the calorimeter hits and the tracks followed by a query decoder. The calorimeter hits are
+clustered by [HitPF] itself, with no separate clustering stage. Between [T] and [HitPF], the
+track candidates are fitted with Genfit2, the detector-generic Kalman filter of Key4hep, which
+takes the material and the magnetic field from the detector description. The models never see a detector name. Every hit is described
 by a fixed set of features defined without reference to a detector layout, and a detector
 reveals itself only through its measurement technology (silicon point or drift wire) and a
 subdetector role shared across detectors. All detector-specific knowledge lives in the
@@ -49,7 +50,7 @@ existing detector, is the intended test of adaptation to a detector the models h
 production/<det>         validation/            postprocessing/              pipeline/
 generator → Geant4 →  →  audit_edm4hep.py  →  → <det>.py adapter        →  → [T] track finding
 reco → EDM4hep ROOT      (exit code = spec)     → canonical parquet          → Genfit2 track fit
-                                                + schema.py audit            → [C] clustering → [PF]
+                                                + schema.py audit            → [HitPF] particle flow
 ```
 
 Each step of the data path ends with an audit that returns an exit code, and the next step
@@ -94,11 +95,10 @@ stored Kalman states, and 8-12% of the ML candidates fail to fit, mostly impure 
 and soft curling tracks; above 1 GeV, pure candidates fail in less than 1.2% of the cases. On IDEA the fit runs end to end, but its
 uncertainties are not yet correct at low pT.
 
-**Calorimeter clustering.** The [C] stage is trained on CLD tt̄. Without tracks, it comes
-within 0.01 of the efficiency of Pandora, which uses tracks, at a higher fake rate (0.861 at
-0.061 against 0.867 at 0.034 on 1,000 held-out events; epoch 5, 2026-11-03).
-
-**Particle flow** has not started.
+**Particle flow.** The [HitPF] model (2026-11-24) has a first training on 2,000 CLD tt̄
+events at 365 GeV, with the fitted [T] tracks; its evaluation against Pandora is the next step.
+It replaces a separate calorimeter-clustering stage, which came within 0.01 of Pandora's
+efficiency without tracks (`docs/results.md`).
 
 The measurements behind these statements, with their dates and definitions, are in
 [`docs/results.md`](docs/results.md).
@@ -106,7 +106,7 @@ The measurements behind these statements, with their dates and definitions, are 
 ## Conventions for contributors
 
 - The definitions of every metric live in one module per stage
-  (`pipeline/pretrain/tracking/metrics.py`, `pipeline/pretrain/clustering/metrics.py`), used
+  (`pipeline/pretrain/tracking/metrics.py`, `pipeline/pretrain/mlpf/metrics.py`), used
   by training, evaluation and the fitted-level analysis alike.
 - The held-out set is the first 10% of the sorted chunks of every sample; it is never used
   for training.
@@ -122,8 +122,8 @@ The IDEA production and the drift-chamber feature extraction are adapted from A.
 `MLBased-FCC-TrackFinder-training`, and the Genfit2 integration is his k4RecTracker work. The
 CLD production is adapted from B. Dudar's setup; CLDConfig and the CLD_o2_v08 geometry are
 vendored from Key4hep and k4geo. The IDEA o2 configuration is vendored from HEP-FCC/FCC-config.
-The model design follows HEPTv2 (arXiv:2606.20437), and the [C] definitions follow HitPF
-(arXiv:2603.04084). The particle-flow model is M. D. Garcia's Mask3D model from the mlpf
+The [T] model design follows HEPTv2 (arXiv:2606.20437), and the [HitPF] definitions follow
+HitPF (arXiv:2603.04084). The particle-flow model is M. D. Garcia's Mask3D model from the mlpf
 repository, parts of which derive from S. Van Stroud's hepattn.
 
 ## Licence

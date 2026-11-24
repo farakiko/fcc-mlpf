@@ -1,5 +1,5 @@
 """
-[PF] model: the Mask3D particle-flow model without IPA, as one plain torch module.
+[HitPF] model: the Mask3D particle-flow model without IPA, as one plain torch module.
 
 The model reads the nodes of one event (calorimeter and muon-system hits, and the fitted
 tracks) and returns, for a fixed set of queries, a mask over the nodes and an objectness
@@ -42,7 +42,7 @@ LOSS_DEFAULTS = dict(mask_bce=5.0, mask_dice=2.0, obj_bce=2.0, null_weight=0.25,
 
 
 def collate(events, device="cpu"):
-    """[PF] events (data.py) -> the flat and padded tensors the model and the loss read."""
+    """[HitPF] events (data.py) -> the flat and padded tensors the model and the loss read."""
     seq = [len(e["e"]) for e in events]
     B, N = len(events), max(seq)
     K = max(1, max(e["K"] for e in events))

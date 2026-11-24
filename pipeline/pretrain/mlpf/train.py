@@ -1,10 +1,9 @@
 """
-[PF] training: the Mask3D particle-flow model on the cached [PF] events (data.py).
+[HitPF] training: the Mask3D particle-flow model on the cached [HitPF] events (data.py).
 
-The recipe follows the [C] stage (../clustering/train.py): AdamW with weight decay 0.01, a
-learning rate of 3e-5 with a linear warmup over 2,000 events and a cosine decay, gradient
-clipping at 1, fp32. The held-out set is the first 10% of the sorted source files, as in [T]
-and [C]. metrics.jsonl records, per epoch, the training loss and its terms and the held-out
+The recipe is AdamW with weight decay 0.01, a learning rate of 3e-5 with a linear warmup over
+2,000 events and a cosine decay, gradient clipping at 1, fp32. The held-out set is the first
+10% of the sorted source files, as in [T]. metrics.jsonl records, per epoch, the training loss and its terms and the held-out
 loss; last.pt and ep_<NNN>.pt carry the model, its configuration and the optimizer state.
 
 Several GPUs are used through torchrun (data parallel): every rank trains on every

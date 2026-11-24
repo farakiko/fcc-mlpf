@@ -22,5 +22,5 @@ The intended workflow for a new detector is: produce and audit a sample
 ([`production/`](../../production/README.md), [`validation/`](../../validation/README.md)),
 convert it ([`postprocessing/`](../../postprocessing/README.md)), fine-tune each stage, and
 evaluate with the standard reports of each stage (track-finding efficiency and fake rate,
-clustering efficiency and fake rate, particle-flow resolutions), each as a function of the
+particle efficiency and fake rate, particle-flow resolutions), each as a function of the
 number of events used.

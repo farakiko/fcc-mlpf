@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # IDEA o2 production job: Pythia -> ddsim (full sim INCL. calo) -> digi+reco -> EOS.
-# One file serves [T] + [C] + [PF]-prep (tracker digis+links, dual-readout calo digis+truth,
+# One file serves [T] and [HitPF] (tracker digis+links, dual-readout calo digis+truth,
 # truth tracks with AtCalorimeter state; classical ECAL clustering and the calo truth links are
 # removed for now, see README "Status"). Based on the colleague's
 # IDEA_o2_v01 instructions (2026-10-05); configs vendored in cfg/.

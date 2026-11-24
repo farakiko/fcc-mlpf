@@ -1,5 +1,5 @@
 """
-[PF] data layer: one CLD source file -> training events for the Mask3D particle-flow model.
+[HitPF] data layer: one CLD source file -> training events for the Mask3D particle-flow model.
 
 The particle-flow model sees the calorimeter and muon-system hits together with the fitted
 tracks of the frozen [T] model, as one set of nodes. Everything comes from the same EDM4hep
@@ -19,8 +19,8 @@ double majority, as everywhere in [T] (tracking/metrics.py dm_match: more than h
 track's hits are the particle's, and more than half of the particle's tracker hits are on the
 track), and its object is that particle's calorimeter mother, as for the calorimeter hits.
 
-Truth objects follow [C] (../clustering/DESIGN.md): the object of a calorimeter hit is
-mc_calomother[chit_mc], and the object of a track is the calorimeter mother of its truth
+Truth objects follow HitPF (arXiv:2603.04084): the object of a calorimeter hit is
+mc_calomother[chit_mc] (postprocessing/README.md), and the object of a track is the calorimeter mother of its truth
 particle. An object is a target if its calorimeter hits hold more than MIN_DEP = 10 MeV or it
 has a matched track; the nodes of the other objects, and tracks without a truth particle, are
 labelled noise (y = -1).
@@ -73,22 +73,27 @@ def _load(name, path):
     return mod
 
 
-# The [C] truth-object definitions and the [T] constants, imported rather than restated.
-_cdata = _load("clustering_data", os.path.join(HERE, "..", "clustering", "data.py"))
+# The [T] constants and matching, imported rather than restated.
 _tmetrics = _load("tracking_metrics", os.path.join(HERE, "..", "tracking", "metrics.py"))
-MIN_DEP = _cdata.MIN_DEP
-CLASSES = _cdata.CLASSES
-object_class = _cdata.object_class
 C_LIGHT = _tmetrics.C_LIGHT
 dm_match = _tmetrics.dm_match
 track_sets = _tmetrics.track_sets
 
+MIN_DEP = 0.01                                 # [GeV] minimum deposited energy of a target (HitPF)
+CLASSES = ("photon", "electron", "muon", "charged_hadron", "neutral_hadron")
 MIN_TRACK_HITS = 3                             # write_mltracks.py --min-hits default
 NTYPE = 5
 NFEAT = 3 + NTYPE + 3
 TYPE_TRACK = 1
 ROLE_TO_TYPE = np.array([2, 2, 3, 3, 3, 4, 4])  # schema.CALO_ROLES (ecal b/e, hcal b/e/ring, muon b/e)
 INT_KEYS = ("ntype", "y", "obj_cls", "obj_pdg", "pandora")
+
+
+def object_class(pdg, charge):
+    """-> index into CLASSES (HitPF's five particle types)."""
+    a = np.abs(pdg)
+    return np.where(a == 22, 0, np.where(a == 11, 1, np.where(a == 13, 2,
+                    np.where(charge != 0, 3, 4)))).astype(np.int64)
 
 
 def track_rows(pred, min_hits=MIN_TRACK_HITS):
@@ -132,7 +137,7 @@ def _onehot(t):
 
 def build_event(e, pred, trk, b_tesla, min_hits=MIN_TRACK_HITS):
     """One canonical event (cld.read_file, stages T,C), its step-A labels and its fitted-track
-    rows (dict of arrays, already restricted to this event) -> a [PF] event dict."""
+    rows (dict of arrays, already restricted to this event) -> a [HitPF] event dict."""
     thit_mc = e["thit_mc"].astype(np.int64)
     if len(pred) != len(thit_mc):
         raise ValueError(f"event {e['event']}: {len(pred)} labels for {len(thit_mc)} tracker hits")
@@ -224,7 +229,7 @@ def ensure_tracks(fitted, tracks, model):
 
 
 def load_source(src, work, model, detector="cld"):
-    """-> list of [PF] event dicts of one source file (see the module docstring), or None if the
+    """-> list of [HitPF] event dicts of one source file (see the module docstring), or None if the
     chain has no step-A labels or no track table for it (step A or the fit failed)."""
     labels, fitted, tracks = chain_paths(src, work, model)
     if not os.path.exists(labels) or not ensure_tracks(fitted, tracks, model):
@@ -246,7 +251,7 @@ def load_source(src, work, model, detector="cld"):
     return events
 
 
-# -------------------------------------------------------- shard streaming (as ../clustering)
+# ------------------------------------------------------------------------- shard streaming
 # Shard format: <key>.ptz = zlib (level 1) of torch.save(list of compact events), integer
 # columns as int32. One shard per source file; the key includes the sample directory. Arrays
 # are stored as torch tensors, which torch serializes itself, so that a cache can be read with
@@ -339,12 +344,12 @@ def load_shard(path):
 
 
 if __name__ == "__main__":
-    # prebuild the [PF] shard cache from a run_chain.sh work directory (held-out files first):
+    # prebuild the [HitPF] shard cache from a run_chain.sh work directory (held-out files first):
     #   python data.py --sources files.txt --chain-work WORK --model v2 --shard-cache DIR \
     #       --jobs 4 --test-frac 0.1
     import argparse
     import math
-    ap = argparse.ArgumentParser(description="prebuild the [PF] shard cache")
+    ap = argparse.ArgumentParser(description="prebuild the [HitPF] shard cache")
     ap.add_argument("--sources", required=True, help="source files, one per line (run_chain.sh -f)")
     ap.add_argument("--chain-work", required=True, help="run_chain.sh work directory (-w)")
     ap.add_argument("--model", required=True, help="[T] model name used in run_chain.sh (-m NAME=...)")

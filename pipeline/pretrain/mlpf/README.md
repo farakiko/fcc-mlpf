@@ -1,20 +1,22 @@
-# pretrain/mlpf — stage [PF]: particle flow
+# pretrain/mlpf — stage [HitPF]: particle flow from hits
 
-This directory trains the particle-flow stage, which combines the fitted tracks and the
-calorimeter hits of an event into reconstructed particles. The model is the Mask3D
-particle-flow model without invariant point attention (IPA) from the mlpf development
-repository: a transformer encoder over the hits and tracks of an event, followed by a query
-decoder in which every active query reconstructs one particle as a mask over the hits and
-tracks. Its track input is the output of the two frozen stages before it: the candidates of
-the [T] model, fitted by Genfit2 (`../tracking/genfit/`). The particle type (five classes:
-photon, electron, muon, charged hadron, neutral hadron) and the energy regression are not part
-of this first version, which reconstructs the particles as clusters of hits and tracks.
+This directory trains the [HitPF] stage, the particle flow from hits, which combines the fitted
+tracks and the calorimeter hits of an event into reconstructed particles. It is the last stage
+of the chain, after [T] and the Genfit2 fit; the calorimeter hits are clustered by this model
+itself, with no separate clustering stage. The model is the Mask3D particle-flow model without
+invariant point attention (IPA) from the mlpf development repository: a transformer encoder over
+the hits and tracks of an event, followed by a query decoder in which every active query
+reconstructs one particle as a mask over the hits and tracks. Its track input is the candidates
+of the frozen [T] model, fitted by Genfit2 (`../tracking/genfit/`). The particle type (five
+classes: photon, electron, muon, charged hadron, neutral hadron) and the energy regression are
+not part of this first version, which reconstructs the particles as clusters of hits and tracks.
 
 | file | content |
 |---|---|
-| `data.py` | one source file → [PF] events (calorimeter hits joined with the fitted tracks); shard cache |
+| `data.py` | one source file → [HitPF] events (calorimeter hits joined with the fitted tracks); shard cache |
 | `model.py` | the model as one torch module; the batch layout (`collate`); the loss; the readout `assign` |
 | `train.py` | training, on one GPU or several (torchrun), with a held-out loss per epoch |
+| `metrics.py` | the HitPF evaluation definitions: one-to-one IoU matching of particles to truth objects, efficiency, fake rate, HitPF's figure binning |
 | `run_pf.sh` | the whole chain for one sample: [T] tracks and Genfit fit, cache, training |
 | `mask3d/` | the model components, ported from mlpf (see Provenance) |
 | `_smoke_model.py` | a forward and backward pass on synthetic input, without data |
@@ -52,8 +54,9 @@ tracker hits; its truth particle is the one matched by double majority, as every
 (`../tracking/metrics.py`): more than half of the track's hits belong to the particle, and more
 than half of the particle's tracker hits are on the track.
 
-Truth objects follow [C] (`../clustering/DESIGN.md`): the object of a calorimeter hit is the
-calorimeter mother of its largest-fraction MC particle, and the object of a track is the
+Truth objects follow HitPF (arXiv:2603.04084): the object of a calorimeter hit is the
+calorimeter mother (`mc_calomother`, `../../../postprocessing/README.md`) of its
+largest-fraction MC particle, and the object of a track is the
 calorimeter mother of its truth particle. An object is a target if its calorimeter hits hold
 more than 10 MeV or a track is matched to it; the other nodes, and the tracks without a truth
 particle, are labelled noise. Tracks without a state at the calorimeter are not used in this
@@ -69,9 +72,9 @@ Every node is described by the eleven features of the Mask3D input:
 | p [GeV] | 0 | from the AtIP curvature and the field of `genfit/detectors.py` |
 | χ²/ndf | 0 | of the fit |
 
-The events of one source file are cached as one compressed shard, as in [C]. The held-out set
-is the first 10% of the sorted source files of the sample; the canonical chunks follow the same
-sorted order, so this is the held-out set of [T] and [C].
+The events of one source file are cached as one compressed shard. The held-out set is the
+first 10% of the sorted source files of the sample; the canonical chunks follow the same sorted
+order, so this is the held-out set of [T].
 
 ## Running the chain
 
@@ -101,7 +104,7 @@ run_pf.sh -s sources.txt -w work/ttbar -m v2=<[T] checkpoint> -o runs/pf_ttbar \
 | after `--` | options of `train.py` |
 
 The fit writes a full copy of every event next to the fitted tracks, about 3 MB per tt̄ event,
-whereas [PF] needs only the per-track table of step D, about 7 kB per event. The chain therefore
+whereas [HitPF] needs only the per-track table of step D, about 7 kB per event. The chain therefore
 runs in batches: it fits a batch of files, extracts their track tables and deletes their fitted
 files, so that what stays per source file is its step-A labels and its track table, and the disk
 holds at most one batch of fitted files. A source file with a track table is not fitted again.
@@ -114,7 +117,7 @@ the claims of `run_chain.sh`, so the chain of one work directory runs on one mac
 | fitted EDM4hep file (step C) | 33 MB | no (yes with `-k`) |
 | track table (step D) | 65 kB | yes |
 | step-A labels | 12 kB | yes |
-| [PF] shard | 1.7 MB | yes |
+| [HitPF] shard | 1.7 MB | yes |
 
 The chain and the cache need CPUs only and the training needs GPUs, so on a shared machine we
 run them separately: `-S chain,cache` first, then `-S train` once GPUs are free. The stages are
@@ -140,7 +143,7 @@ tables and labels.
 
 ## Training
 
-The recipe follows [C]: AdamW with weight decay 0.01, a learning rate of 3 × 10⁻⁵ with a linear
+The recipe is AdamW with weight decay 0.01, a learning rate of 3 × 10⁻⁵ with a linear
 warmup over 2,000 events and a cosine decay, gradient clipping at 1, fp32. The loss is the
 Hungarian-matched loss of the mlpf model, with its reference weights (`model.LOSS_DEFAULTS`):
 mask BCE 5 and Dice 2, objectness 2 with a weight of 0.25 for unmatched queries, the same

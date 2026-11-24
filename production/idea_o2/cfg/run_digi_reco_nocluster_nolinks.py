@@ -3,7 +3,7 @@
 # upstream problems are open (production/idea_o2/README.md, "Status"; evidence in bugreport/):
 #  1. classical ECAL clustering removed: ClusterSeedGrower/TrackDrivenClusterSeeding enters
 #     an infinite loop on empty cluster seeds ("openingAngleDist: zero-length vector").
-#     Dropped outputs: TopoGrownClusters, EcalClusterMCParticleLinks (the [C] baseline).
+#     Dropped outputs: TopoGrownClusters, EcalClusterMCParticleLinks (a [HitPF] baseline).
 #  2. CreateTruthLinks removed: > 2.4 CPU-h/event over ~1.06M SCEPCal contribution records
 #     per event. Dropped outputs: SCEPCal_/DRTube_CaloHitMCParticleLinks. The ingredients of
 #     the hit -> particle truth (digi -> sim links, sim hits with contributions and particle

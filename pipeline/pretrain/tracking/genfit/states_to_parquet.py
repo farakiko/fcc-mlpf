@@ -1,7 +1,7 @@
 """
 Step D of the ML->Genfit chain (any env with uproot+pyarrow): extract the fitted track
 states from GenfitTrackFitter output into a compact per-track parquet -- the block that
-gets merged into the canonical training parquets as [PF]'s track inputs.
+gets merged into the canonical training parquets as [HitPF]'s track inputs.
 
 Per CONVERGED track (chi2 >= 0, ndf > 0, AtIP state present; GenfitTrackFitter writes a
 failed fit with chi2 = ndf = -1): event index, track index in the collection, AtIP state

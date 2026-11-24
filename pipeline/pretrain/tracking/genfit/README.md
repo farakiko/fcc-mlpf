@@ -8,8 +8,8 @@ generic across detectors: it reads each hit of a track according to its type
 (`TrackerHitPlane` as a planar measurement, `SenseWireHit` as a wire measurement), so changing
 the detector means changing the geometry and, for a drift chamber, naming it. Because the
 stages are trained one after another, the fit is a batch pass between the frozen [T] model and
-[PF]: the candidates are fitted once per dataset version, and [PF] will consume the stored
-fitted parameters. This directory also holds the fitted-level evaluation.
+[HitPF]: the candidates are fitted once per dataset version, and [HitPF] consumes the stored
+fitted parameters (the step-D track tables). This directory also holds the fitted-level evaluation.
 
 ## The chain
 
@@ -116,7 +116,7 @@ In addition:
 - **converged**: the fit has χ² ≥ 0, ndf > 0 and a state at the interaction point
   (`GenfitTrackFitter` writes a failed fit with χ² = ndf = −1). Fits are paired with candidates
   through their hits, not through the order of the collections.
-- **chain efficiency**: found and converged, which is what reaches [PF].
+- **chain efficiency**: found and converged, which is what reaches [HitPF].
 - **fake rate**: among converged tracks, in bins of the fitted pT. Fits fail preferentially on
   impure candidates, so this rate is lower than the finding-level fake rate of `../eval.py`.
 - **resolution sample**: found, converged, with the dominant particle produced within 100 mm of
@@ -180,6 +180,6 @@ and differ in the tails.
 ## Open items
 
 - Slim the output (`outputCommands`) and add a batch wrapper for a pass over a full corpus.
-- Merge the output of step D into the canonical training files as the track input of [PF].
+- Merge the output of step D into the canonical training files as the track input of [HitPF].
 - Store the hit provenance (collection, index) in the canonical schema at the next
   reconversion, so that step B becomes a plain lookup for every detector.

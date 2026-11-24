@@ -3,7 +3,7 @@
 This directory produces IDEA_o2_v01 samples: the IDEA variant with the SCEPCal crystal
 electromagnetic calorimeter and the dual-readout tube hadronic calorimeter, fully simulated
 and digitized. Unlike the tracking-only IDEA o1 sample (`../idea/`), one o2 file is meant to
-serve [T], [C] and the input preparation of [PF]. The configurations are vendored from
+serve [T] and [HitPF]. The configurations are vendored from
 HEP-FCC/FCC-config (`FCCee/FullSim/IDEA/IDEA_o2_v01`), following the instructions of the
 author of the SCEPCal and dual-readout digitization (2026-10-05).
 
@@ -43,7 +43,7 @@ digitizer as in o1):
 | `SiWrBDigis`, `SiWrDDigis` | `SiWrBSimDigiLinks`, `SiWrDSimDigiLinks` | `SiWrBCollection`, `SiWrDCollection` |
 | `MSTrackerHits` (muon system) | `MSTrackerHitRelations` | `MuonSystemCollection` |
 
-**Calorimeter ([C]).** Every cell is read out twice, through its scintillation and its
+**Calorimeter ([HitPF]).** Every cell is read out twice, through its scintillation and its
 Cherenkov signal:
 
 | system | scintillation | Cherenkov | links to simulated hits | simulated hits |
@@ -59,15 +59,15 @@ energy truth, as in CLD. The direct hit-to-particle links of the upstream config
 (`SCEPCal_CaloHitMCParticleLinks`, `DRTube_CaloHitMCParticleLinks`) are not produced at
 present (see Status).
 
-**Inputs and baselines for [PF].**
+**Inputs and baselines for [HitPF].**
 - `TracksFromGenParticles` (with `TracksFromGenParticlesAssociation`): smeared truth tracks
-  with an `AtCalorimeter` state, a stand-in track input for [PF] development until the
+  with an `AtCalorimeter` state, a stand-in track input for [HitPF] development until the
   Genfit-fitted ML tracks replace it.
-- `TopoGrownClusters` (with `EcalClusterMCParticleLinks`): the classical ECAL clustering, the
-  [C] baseline. It is not produced at present (see Status).
+- `TopoGrownClusters` (with `EcalClusterMCParticleLinks`): the classical ECAL clustering, a
+  [HitPF] baseline. It is not produced at present (see Status).
 - dN/dx on tracks (`TrackdNdxDelphesBased`).
 - Classical HCAL clustering and IDEA particle flow are still being integrated upstream
-  (PandoraPFAOrg/LCContent#33); a [PF] baseline for IDEA follows from that work.
+  (PandoraPFAOrg/LCContent#33); a [HitPF] baseline for IDEA follows from that work.
 
 ## Calibration
 
@@ -75,7 +75,7 @@ The hit energy is the photon count divided by the light yield (constants in
 `cfg/run_digi_reco.py`: ECAL scintillation 1965 and Cherenkov 97.75 photoelectrons per GeV;
 HCAL 206.25 and 68.25). The scintillation signal is Poisson-smeared around the expected
 yield and the Cherenkov signal is the actual photon count, so the intrinsic stochastic term
-is included, but electronic noise is not yet simulated. [C] and [PF] results on these files
+is included, but electronic noise is not yet simulated. [HitPF] results on these files
 are therefore an upper bound with respect to noise, and every plot made from them should say
 so. Independent Gaussian smearing per channel can serve as a robustness test.
 

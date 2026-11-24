@@ -12,7 +12,7 @@ Definitions (metrics.py, identical to train.py / eval.py):
   converged         the candidate's fit has chi2 >= 0, ndf > 0 and an AtIP state; fit and
                     candidate are paired through their hits (> 50% shared), so the pairing
                     does not depend on the fitter's output ordering
-  chain efficiency  found AND converged -- what reaches [PF]
+  chain efficiency  found AND converged -- what reaches [HitPF]
   fake rate         among CONVERGED tracks, those not DM-matched, binned in Genfit pT.
                     Fits fail preferentially on impure candidates, so this is below the
                     finding-level fake rate of eval.py; both are physical, they answer
