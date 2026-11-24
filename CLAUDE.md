@@ -119,6 +119,41 @@ mean something else in the ML literature.
 - For [C] status, report the main configuration against Pandora and the nearest-neighbour floor
   only, in one short table.
 
+## Code style
+
+`ruff.toml` and `.pre-commit-config.yaml` enforce formatting and lint (`production/` is vendored
+and excluded); run `ruff format` and `ruff check` before staging. The rest no tool checks, and
+follows Clean Code (R. C. Martin):
+
+- Simple: as few lines as possible; no unused options, speculative flags or over-configurability.
+  Polymorphism, dependency injection and other abstractions only where they remove code.
+- Top-down: `main()` reads as an outline of the script, a few calls in sequence; details live in
+  the functions it calls, with simple inputs (names, config values). Callers above callees,
+  dependent functions close together, variables declared next to their use.
+- Functions: small, one thing each, few arguments, no hidden side effects, no flag arguments
+  (two functions instead).
+- Names: `snake_case`, descriptive, unambiguous and searchable; full words, no abbreviations,
+  no single-letter names outside trivial loop indices, no type prefixes; named constants
+  instead of magic numbers.
+- No nested calls, not even `f(g(x))`: one call per line with named intermediates. Exceptions:
+  trivial builtins (`len`, `int`, `range`), type conversions (`torch.from_numpy(...)`),
+  constructor configs (`nn.Sequential(nn.Linear(...))`), measured performance needs; method
+  chains are fine.
+- Long argument lists, in any language: one argument per line, indented; in bash, whenever a
+  command has more than three arguments.
+- No negative conditionals; each boundary condition handled in one place.
+- Configuration at the top (CLI, config files), never buried in functions.
+- Classes hold either data or behaviour, with few instance variables; a base class knows nothing
+  of its subclasses.
+- Modules: one responsibility each; core logic separate from logging and debugging helpers. A
+  refactoring includes the file organisation, not as a follow-up.
+- Fix the root cause of a bug, not its symptom.
+- Comments only to explain why, no commented-out code, no horizontal alignment; docstrings only
+  where name and signature are not enough, one or two lines.
+- f-strings only, never `%` or `.format()`.
+- Consistency: similar things done the same way everywhere; one term per concept, in code and
+  documentation alike.
+
 ## Writing style for documentation
 
 READMEs and docs follow the user's papers (e.g. arXiv:2606.14373):

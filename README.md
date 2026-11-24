@@ -115,6 +115,8 @@ The measurements behind these statements, with their dates and definitions, are 
 - The training code is detector-blind: a new detector needs a production chain, a collection
   map in the audit and a conversion adapter, and nothing in `pipeline/`.
 - Results are recorded in `docs/results.md` with their date, sample and definitions.
+- Code is formatted and linted by `ruff` through `pre-commit` (`pip install pre-commit &&
+  pre-commit install`); the conventions no tool checks are in `CLAUDE.md`.
 
 ## Acknowledgments
 

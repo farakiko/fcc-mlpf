@@ -1,0 +1,5 @@
+line-length = 100
+extend-exclude = ["production"]
+
+[lint]
+ignore = ["E402", "C408"]
